@@ -1,0 +1,13 @@
+.env
+
+# Go build/test artifacts
+*.test
+*.out
+
+# Python cache/runtime artifacts
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Sandbox outputs/examples
+sandbox-projects/
