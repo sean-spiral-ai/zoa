@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"codexagentbase/baseline-agent/internal/agent"
-	"codexagentbase/baseline-agent/internal/llm"
-	"codexagentbase/baseline-agent/internal/tools"
+	"codexagentbase/baselineagent/internal/agent"
+	"codexagentbase/baselineagent/internal/llm"
+	"codexagentbase/baselineagent/internal/tools"
 )
 
 type ConversationConfig struct {

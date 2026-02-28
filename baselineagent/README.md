@@ -9,10 +9,10 @@ A practical coding agent with:
 CLI:
 
 ```bash
-go run ./baseline-agent/cmd/coding-agent --prompt "..."
+go run ./baselineagent/cmd/coding-agent --prompt "..."
 ```
 
 Library:
 
-- package: `codexagentbase/baseline-agent`
+- package: `codexagentbase/baselineagent`
 - API: `baselineagent.Run(ctx, apiKey, baselineagent.RunConfig{...})`

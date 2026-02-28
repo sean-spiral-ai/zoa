@@ -10,7 +10,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
-	"codexagentbase/baseline-agent/internal/llm"
+	"codexagentbase/baselineagent/internal/llm"
 )
 
 type FindTool struct {

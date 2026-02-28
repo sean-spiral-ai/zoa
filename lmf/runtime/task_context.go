@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "codexagentbase/baseline-agent"
+	baselineagent "codexagentbase/baselineagent"
 )
 
 type TaskContextOptions struct {
@@ -177,7 +177,7 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 		key = strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
 	}
 	if key == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY is required for baseline-agent backed operations")
+		return "", fmt.Errorf("GEMINI_API_KEY is required for baselineagent backed operations")
 	}
 	t.apiKey = key
 	return key, nil

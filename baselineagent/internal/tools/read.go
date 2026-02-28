@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"codexagentbase/baseline-agent/internal/llm"
+	"codexagentbase/baselineagent/internal/llm"
 )
 
 type ReadTool struct {

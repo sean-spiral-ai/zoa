@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"codexagentbase/baseline-agent/internal/llm"
-	"codexagentbase/baseline-agent/internal/tools"
+	"codexagentbase/baselineagent/internal/llm"
+	"codexagentbase/baselineagent/internal/tools"
 )
 
 type SessionConfig struct {
