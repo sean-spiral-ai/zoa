@@ -46,10 +46,12 @@ type Message struct {
 }
 
 type CompletionRequest struct {
-	Model       string
-	Messages    []Message
-	Tools       []ToolSpec
-	Temperature float64
+	Model            string
+	Messages         []Message
+	Tools            []ToolSpec
+	Temperature      float64
+	ResponseMimeType string
+	ResponseSchema   map[string]any
 }
 
 type CompletionResponse struct {

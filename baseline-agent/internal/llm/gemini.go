@@ -36,7 +36,9 @@ type geminiGenerateRequest struct {
 }
 
 type geminiGenerationConfig struct {
-	Temperature float64 `json:"temperature,omitempty"`
+	Temperature      float64        `json:"temperature,omitempty"`
+	ResponseMimeType string         `json:"responseMimeType,omitempty"`
+	ResponseSchema   map[string]any `json:"responseSchema,omitempty"`
 }
 
 type geminiToolDefinitions struct {
@@ -104,8 +106,12 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 			Parts: []geminiPart{{Text: system}},
 		}
 	}
-	if req.Temperature > 0 {
-		payload.GenerationConfig = &geminiGenerationConfig{Temperature: req.Temperature}
+	if req.Temperature > 0 || strings.TrimSpace(req.ResponseMimeType) != "" || req.ResponseSchema != nil {
+		payload.GenerationConfig = &geminiGenerationConfig{
+			Temperature:      req.Temperature,
+			ResponseMimeType: strings.TrimSpace(req.ResponseMimeType),
+			ResponseSchema:   req.ResponseSchema,
+		}
 	}
 	if len(req.Tools) > 0 {
 		decls := make([]geminiFunctionDeclaration, 0, len(req.Tools))
