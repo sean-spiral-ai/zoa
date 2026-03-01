@@ -40,9 +40,10 @@ func main() {
 	flag.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	flag.Parse()
 
-	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
-	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "warning: GEMINI_API_KEY is not set; non-slash chat messages will fail until configured")
+	apiKey, ok := baselineagent.ResolveAPIKey("")
+	if !ok {
+		apiKey = ""
+		fmt.Fprintf(os.Stderr, "warning: %s is not set; non-slash chat messages will fail until configured\n", baselineagent.GeminiAPIKeyEnvVar)
 	}
 
 	registry := functions.NewRegistry()

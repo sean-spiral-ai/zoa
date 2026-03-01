@@ -42,10 +42,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		return nil, fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 
-	apiKey := strings.TrimSpace(opts.APIKey)
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
-	}
+	apiKey, _ := baselineagent.ResolveAPIKey(opts.APIKey)
 
 	toolset, err := baselineagent.NewBuiltinCodingTools(absCWD)
 	if err != nil {
@@ -178,12 +175,9 @@ func (t *TaskContext) ensureMainConversation() error {
 }
 
 func (t *TaskContext) resolveAPIKey() (string, error) {
-	key := strings.TrimSpace(t.apiKey)
-	if key == "" {
-		key = strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
-	}
-	if key == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY is required for baselineagent backed operations")
+	key, ok := baselineagent.ResolveAPIKey(t.apiKey)
+	if !ok {
+		return "", fmt.Errorf("%s is required for baselineagent backed operations", baselineagent.GeminiAPIKeyEnvVar)
 	}
 	t.apiKey = key
 	return key, nil

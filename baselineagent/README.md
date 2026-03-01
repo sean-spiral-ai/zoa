@@ -6,12 +6,6 @@ A practical coding agent with:
 - agent tool loop
 - tools: read, write, edit, bash, grep, find, ls
 
-CLI:
-
-```bash
-go run ./baselineagent/cmd/coding-agent --prompt "..."
-```
-
 Library:
 
 - package: `codexagentbase/baselineagent`
