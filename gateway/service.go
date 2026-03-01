@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	baselineagent "codexagentbase/baselineagent"
+	baselineagent "zoa/baselineagent"
 )
 
 const defaultChatSystemPrompt = `You are an assistant in a persistent chat session.

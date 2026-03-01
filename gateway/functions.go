@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	lmf "codexagentbase/lmf/runtime"
+	lmf "zoa/lmf/runtime"
 )
 
 func RegisterFunctions(registry *lmf.Registry, service *Service) error {

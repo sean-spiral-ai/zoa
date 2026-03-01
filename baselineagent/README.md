@@ -8,7 +8,7 @@ A practical coding agent with:
 
 Library:
 
-- package: `codexagentbase/baselineagent`
+- package: `zoa/baselineagent`
 - API: `baselineagent.Run(ctx, apiKey, baselineagent.RunConfig{...})`
 - custom tools: `baselineagent.Tool`
 - builtin tool set: `baselineagent.NewBuiltinCodingTools(cwd)`

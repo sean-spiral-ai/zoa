@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	builtintools "codexagentbase/baselineagent/builtintools"
-	"codexagentbase/baselineagent/internal/llm"
+	builtintools "zoa/baselineagent/builtintools"
+	"zoa/baselineagent/internal/llm"
 )
 
 type SessionConfig struct {

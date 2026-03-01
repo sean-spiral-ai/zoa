@@ -10,7 +10,7 @@ This repository now has three primary parts:
 
 The baseline agent is exposed as code:
 
-- import path: `codexagentbase/baselineagent`
+- import path: `zoa/baselineagent`
 - entrypoint: `baselineagent.Run(ctx, apiKey, cfg)`
 - public tool API: `baselineagent.Tool`, `baselineagent.NewBuiltinCodingTools(...)`
 

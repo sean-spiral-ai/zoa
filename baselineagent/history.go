@@ -3,7 +3,7 @@ package baselineagent
 import (
 	"encoding/json"
 
-	"codexagentbase/baselineagent/internal/llm"
+	"zoa/baselineagent/internal/llm"
 )
 
 type ConversationRole = llm.MessageRole

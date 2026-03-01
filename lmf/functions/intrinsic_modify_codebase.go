@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	lmf "codexagentbase/lmf/runtime"
+	lmf "zoa/lmf/runtime"
 )
 
 const intrinsicModifyCodebasePrompt = `You are a pragmatic coding agent working inside a real codebase.

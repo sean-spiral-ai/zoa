@@ -1,4 +1,4 @@
-module codexagentbase
+module zoa
 
 go 1.23
 

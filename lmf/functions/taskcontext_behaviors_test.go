@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	baselineagent "codexagentbase/baselineagent"
-	lmf "codexagentbase/lmf/runtime"
+	baselineagent "zoa/baselineagent"
+	lmf "zoa/lmf/runtime"
 )
 
 func TestProgrammaticGuard(t *testing.T) {

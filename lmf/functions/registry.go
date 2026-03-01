@@ -1,6 +1,6 @@
 package functions
 
-import lmf "codexagentbase/lmf/runtime"
+import lmf "zoa/lmf/runtime"
 
 func NewRegistry() *lmf.Registry {
 	r := lmf.NewRegistry()
