@@ -1,4 +1,4 @@
-package functions_test
+package lmf_test
 
 import (
 	"context"
@@ -60,8 +60,8 @@ func TestProgrammaticGuard(t *testing.T) {
 }
 
 func TestNLExecContextMemory(t *testing.T) {
-	requireAPIKey(t)
-	tc := newTaskContext(t)
+	model := requireModel(t)
+	tc := newTaskContext(t, model)
 
 	first, err := lmf.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
@@ -82,8 +82,8 @@ func TestNLExecContextMemory(t *testing.T) {
 }
 
 func TestNLConditionIsolation(t *testing.T) {
-	requireAPIKey(t)
-	tc := newTaskContext(t)
+	model := requireModel(t)
+	tc := newTaskContext(t, model)
 
 	first, err := lmf.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
@@ -112,8 +112,8 @@ func TestNLConditionIsolation(t *testing.T) {
 }
 
 func TestNLConditionFailure(t *testing.T) {
-	requireAPIKey(t)
-	tc := newTaskContext(t)
+	model := requireModel(t)
+	tc := newTaskContext(t, model)
 
 	err := tc.NLCondition(
 		"contains_token",
@@ -134,8 +134,8 @@ func TestNLConditionFailure(t *testing.T) {
 }
 
 func TestTypedNLExecEcho(t *testing.T) {
-	requireAPIKey(t)
-	tc := newTaskContext(t)
+	model := requireModel(t)
+	tc := newTaskContext(t, model)
 
 	type greeting struct {
 		Message string `json:"message"`
@@ -158,17 +158,27 @@ func TestTypedNLExecEcho(t *testing.T) {
 	}
 }
 
-func requireAPIKey(t *testing.T) {
+func requireModel(t *testing.T) string {
 	t.Helper()
-	if _, ok := baselineagent.ResolveAPIKey(""); !ok {
-		t.Fatalf("%s is required to run LLM-backed tests", baselineagent.GeminiAPIKeyEnvVar)
+	if _, ok := baselineagent.ResolveCredential("", baselineagent.DefaultGeminiModel); ok {
+		return baselineagent.DefaultGeminiModel
 	}
+	if _, ok := baselineagent.ResolveCredential("", baselineagent.DefaultAnthropicModel); ok {
+		return baselineagent.DefaultAnthropicModel
+	}
+	t.Fatalf(
+		"%s or %s is required to run LLM-backed tests",
+		baselineagent.GeminiAPIKeyEnvVar,
+		baselineagent.AnthropicOAuthTokenEnvVar,
+	)
+	return ""
 }
 
-func newTaskContext(t *testing.T) *lmf.TaskContext {
+func newTaskContext(t *testing.T, model string) *lmf.TaskContext {
 	t.Helper()
 	tc, err := lmf.NewTaskContext(context.Background(), lmf.TaskContextOptions{
 		CWD:         t.TempDir(),
+		Model:       model,
 		MaxTurns:    24,
 		Timeout:     120 * time.Second,
 		Temperature: 0,

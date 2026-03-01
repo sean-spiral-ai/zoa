@@ -42,21 +42,27 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		return nil, fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 
-	apiKey, _ := baselineagent.ResolveAPIKey(opts.APIKey)
-
 	toolset, err := baselineagent.NewBuiltinCodingTools(absCWD)
 	if err != nil {
 		return nil, fmt.Errorf("initialize baseline tools: %w", err)
 	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		model = baselineagent.DefaultModel
+	}
+	if !baselineagent.IsSupportedModel(model) {
+		return nil, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(baselineagent.SupportedModelNames(), ", "))
+	}
 
 	baseConfig := baselineagent.ConversationConfig{
 		CWD:         absCWD,
-		Model:       strings.TrimSpace(opts.Model),
+		Model:       model,
 		MaxTurns:    opts.MaxTurns,
 		Timeout:     opts.Timeout,
 		Temperature: opts.Temperature,
 		Tools:       toolset,
 	}
+	apiKey, _ := baselineagent.ResolveCredential(opts.APIKey, model)
 
 	return &TaskContext{
 		ctx:        ctx,
@@ -175,9 +181,13 @@ func (t *TaskContext) ensureMainConversation() error {
 }
 
 func (t *TaskContext) resolveAPIKey() (string, error) {
-	key, ok := baselineagent.ResolveAPIKey(t.apiKey)
+	key, ok := baselineagent.ResolveCredential(t.apiKey, t.baseConfig.Model)
 	if !ok {
-		return "", fmt.Errorf("%s is required for baselineagent backed operations", baselineagent.GeminiAPIKeyEnvVar)
+		envVar := baselineagent.RequiredCredentialEnvVarForModel(t.baseConfig.Model)
+		return "", fmt.Errorf(
+			"%s is required for baselineagent backed operations",
+			envVar,
+		)
 	}
 	t.apiKey = key
 	return key, nil

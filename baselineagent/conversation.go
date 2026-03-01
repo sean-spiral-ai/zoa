@@ -96,7 +96,7 @@ func (c *defaultConversation) History() []ConversationMessage {
 
 func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, time.Duration, error) {
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, 0, fmt.Errorf("api key is required")
+		return nil, 0, fmt.Errorf("credential is required")
 	}
 	if strings.TrimSpace(cfg.CWD) == "" {
 		return nil, 0, fmt.Errorf("cwd is required")
@@ -105,6 +105,13 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
 		model = DefaultModel
+	}
+	if !IsSupportedModel(model) {
+		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(SupportedModelNames(), ", "))
+	}
+	provider := InferProviderFromModel(model)
+	if !provider.Valid() {
+		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(SupportedModelNames(), ", "))
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
@@ -125,7 +132,10 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		systemPrompt = agent.DefaultSystemPrompt
 	}
 
-	client := llm.NewGeminiClient(apiKey)
+	client, err := newLLMClient(provider, apiKey)
+	if err != nil {
+		return nil, 0, err
+	}
 	session, err := agent.NewSession(agent.SessionConfig{
 		Client:          client,
 		Model:           model,
@@ -141,4 +151,15 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 	}
 
 	return session, cfg.Timeout, nil
+}
+
+func newLLMClient(provider Provider, credential string) (llm.Client, error) {
+	switch provider {
+	case ProviderGemini:
+		return llm.NewGeminiClient(credential), nil
+	case ProviderAnthropic:
+		return llm.NewAnthropicClientWithOAuthToken(credential), nil
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", provider)
+	}
 }

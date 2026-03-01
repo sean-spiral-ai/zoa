@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// JSONSchemaForOutputValue builds a Gemini-compatible JSON schema from an
+// JSONSchemaForOutputValue builds a portable JSON schema from an
 // output pointer type (for example: &MyStruct{} or new(int)).
 func JSONSchemaForOutputValue(out any) (map[string]any, error) {
 	if out == nil {
@@ -44,8 +44,7 @@ func schemaForType(t reflect.Type) (map[string]any, error) {
 		if t.Key().Kind() != reflect.String {
 			return nil, fmt.Errorf("map output type must have string keys, got %s", t.Key())
 		}
-		// Gemini responseSchema currently rejects additionalProperties in this endpoint.
-		// For map outputs we fall back to unconstrained object shape.
+		// For map outputs we fall back to unconstrained object shape for cross-provider compatibility.
 		return map[string]any{"type": "object"}, nil
 	case reflect.Struct:
 		properties := map[string]any{}

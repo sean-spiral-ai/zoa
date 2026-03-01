@@ -10,7 +10,7 @@ type Function struct {
 	// Keep it non-redundant with Schema (describe intent/situation, not field shapes).
 	WhenToUse string
 	// Schema is a JSON Schema object represented as map[string]any.
-	// It should follow the same Gemini-compatible JSON Schema subset used elsewhere
+	// It should follow the same JSON Schema subset used elsewhere
 	// in this codebase (object/array/scalar types, properties, required, etc.).
 	Schema map[string]any
 	Exec   ExecFunc

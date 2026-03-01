@@ -42,10 +42,6 @@ type Service struct {
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
-	sessionID := strings.TrimSpace(cfg.SessionID)
-	if sessionID == "" {
-		sessionID = "default"
-	}
 	cwd := strings.TrimSpace(cfg.CWD)
 	if cwd == "" {
 		wd, err := os.Getwd()
@@ -59,12 +55,18 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 	cfg.CWD = absCWD
-	cfg.SessionID = sessionID
 
 	storeDir := strings.TrimSpace(cfg.SessionDir)
+	sessionID := strings.TrimSpace(cfg.SessionID)
 	if storeDir == "" {
+		if sessionID == "" {
+			sessionID = "default"
+		}
 		storeDir = filepath.Join(".gateway", "sessions", sessionID)
+	} else if sessionID == "" {
+		sessionID = defaultSessionIDFromStoreDir(storeDir)
 	}
+	cfg.SessionID = sessionID
 	taskLogDir := strings.TrimSpace(cfg.TaskLogDir)
 	if taskLogDir == "" {
 		taskLogDir = filepath.Join(storeDir, "tasks")
@@ -87,6 +89,14 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}
 	svc.Start()
 	return svc, nil
+}
+
+func defaultSessionIDFromStoreDir(storeDir string) string {
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(storeDir)))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "default"
+	}
+	return base
 }
 
 func (s *Service) Start() {

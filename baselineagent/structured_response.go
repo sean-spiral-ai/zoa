@@ -7,8 +7,8 @@ type StructuredResponseFormat interface {
 	Schema() map[string]any
 }
 
-// JSONSchemaFormat requests JSON output constrained by Gemini responseSchema.
-// Schema should follow the Gemini response schema subset for GenerateContent.
+// JSONSchemaFormat requests JSON output constrained by provider-supported schema features.
+// Gemini enforces this with responseSchema; Claude enforces this with output_config json_schema.
 type JSONSchemaFormat struct {
 	SchemaObject map[string]any
 }

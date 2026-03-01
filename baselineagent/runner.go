@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	DefaultModel       = "gemini-3-flash-preview"
-	DefaultTemperature = 0.2
-	DefaultMaxTurns    = 100
+	DefaultGeminiModel    = ModelGemini3FlashPreview
+	DefaultAnthropicModel = ModelClaudeOpus46
+	DefaultModel          = DefaultAnthropicModel
+	DefaultTemperature    = 0.2
+	DefaultMaxTurns       = 100
 )
 
 type RunConfig struct {

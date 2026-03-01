@@ -2,7 +2,7 @@
 
 A practical coding agent with:
 
-- Gemini function-calling client
+- Gemini + Anthropic function-calling clients
 - agent tool loop
 - tools: read, write, edit, bash, grep, find, ls
 

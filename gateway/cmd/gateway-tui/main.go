@@ -22,7 +22,6 @@ func main() {
 	var (
 		cwd         string
 		sessionDir  string
-		sessionID   string
 		model       string
 		maxTurns    int
 		temperature float64
@@ -32,18 +31,36 @@ func main() {
 
 	flag.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway snapshot/task-log persistence")
-	flag.StringVar(&sessionID, "session-id", "default", "Session identifier")
-	flag.StringVar(&model, "model", baselineagent.DefaultModel, "Gemini model")
+	flag.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	flag.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	flag.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
 	flag.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
 	flag.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	flag.Parse()
 
-	apiKey, ok := baselineagent.ResolveAPIKey("")
+	if strings.TrimSpace(model) == "" {
+		model = baselineagent.DefaultModel
+	}
+	model = strings.TrimSpace(model)
+	if !baselineagent.IsSupportedModel(model) {
+		fmt.Fprintf(
+			os.Stderr,
+			"error: unsupported model %q (supported: %s)\n",
+			model,
+			strings.Join(baselineagent.SupportedModelNames(), ", "),
+		)
+		os.Exit(1)
+	}
+
+	apiKey, ok := baselineagent.ResolveCredential("", model)
 	if !ok {
 		apiKey = ""
-		fmt.Fprintf(os.Stderr, "warning: %s is not set; non-slash chat messages will fail until configured\n", baselineagent.GeminiAPIKeyEnvVar)
+		envVar := baselineagent.RequiredCredentialEnvVarForModel(model)
+		fmt.Fprintf(
+			os.Stderr,
+			"warning: %s is not set; non-slash chat messages will fail until configured\n",
+			envVar,
+		)
 	}
 
 	registry := functions.NewRegistry()
@@ -66,7 +83,6 @@ func main() {
 	allTools = append(allTools, lmfTools...)
 
 	service, err := gateway.NewService(gateway.ServiceConfig{
-		SessionID:   sessionID,
 		SessionDir:  sessionDir,
 		TaskLogDir:  filepath.Join(sessionDir, "tasks"),
 		APIKey:      apiKey,

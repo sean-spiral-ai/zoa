@@ -8,21 +8,41 @@ import (
 )
 
 const GeminiAPIKeyEnvVar = "GEMINI_API_KEY"
+const AnthropicOAuthTokenEnvVar = "ANTHROPIC_OAUTH_TOKEN"
 
-// ResolveAPIKey returns an API key from explicit input, environment, or nearest .env.
+// ResolveAPIKey returns default-model credentials from explicit input, environment, or nearest .env.
 func ResolveAPIKey(explicit string) (string, bool) {
+	return ResolveCredential(explicit, DefaultModel)
+}
+
+// ResolveCredential returns model credentials from explicit input, environment, or nearest .env.
+func ResolveCredential(explicit string, model string) (string, bool) {
 	if key := strings.TrimSpace(explicit); key != "" {
 		return key, true
 	}
 
-	if key := strings.TrimSpace(os.Getenv(GeminiAPIKeyEnvVar)); key != "" {
+	envVar := RequiredCredentialEnvVarForModel(model)
+	if envVar == "" {
+		return "", false
+	}
+	if key := strings.TrimSpace(os.Getenv(envVar)); key != "" {
 		return key, true
 	}
-
-	if key, ok := loadKeyFromNearestDotEnv(GeminiAPIKeyEnvVar); ok {
+	if key, ok := loadKeyFromNearestDotEnv(envVar); ok {
 		return key, true
 	}
 	return "", false
+}
+
+func RequiredCredentialEnvVarForModel(model string) string {
+	switch InferProviderFromModel(model) {
+	case ProviderAnthropic:
+		return AnthropicOAuthTokenEnvVar
+	case ProviderGemini:
+		return GeminiAPIKeyEnvVar
+	default:
+		return ""
+	}
 }
 
 func loadKeyFromNearestDotEnv(key string) (string, bool) {
