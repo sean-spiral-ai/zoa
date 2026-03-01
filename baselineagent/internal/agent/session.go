@@ -6,18 +6,19 @@ import (
 	"io"
 	"strings"
 
+	builtintools "codexagentbase/baselineagent/builtintools"
 	"codexagentbase/baselineagent/internal/llm"
-	"codexagentbase/baselineagent/internal/tools"
 )
 
 type SessionConfig struct {
-	Client       llm.Client
-	Model        string
-	Tools        []tools.Tool
-	Temperature  float64
-	MaxTurns     int
-	SystemPrompt string
-	VerboseLog   io.Writer
+	Client          llm.Client
+	Model           string
+	Tools           []builtintools.Tool
+	Temperature     float64
+	MaxTurns        int
+	SystemPrompt    string
+	VerboseLog      io.Writer
+	InitialMessages []llm.Message
 }
 
 type RunResult struct {
@@ -35,7 +36,7 @@ type PromptOptions struct {
 type Session struct {
 	client      llm.Client
 	model       string
-	registry    *tools.Registry
+	registry    *builtintools.Registry
 	temperature float64
 	maxTurns    int
 	verboseLog  io.Writer
@@ -59,16 +60,21 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		cfg.SystemPrompt = DefaultSystemPrompt
 	}
 
+	initialMessages := cloneMessages(cfg.InitialMessages)
+	if len(initialMessages) == 0 {
+		initialMessages = []llm.Message{
+			{Role: llm.RoleSystem, Text: cfg.SystemPrompt},
+		}
+	}
+
 	return &Session{
 		client:      cfg.Client,
 		model:       cfg.Model,
-		registry:    tools.NewRegistry(cfg.Tools),
+		registry:    builtintools.NewRegistry(cfg.Tools),
 		temperature: cfg.Temperature,
 		maxTurns:    cfg.MaxTurns,
 		verboseLog:  cfg.VerboseLog,
-		messages: []llm.Message{
-			{Role: llm.RoleSystem, Text: cfg.SystemPrompt},
-		},
+		messages:    initialMessages,
 	}, nil
 }
 
@@ -164,6 +170,10 @@ func (s *Session) Fork() *Session {
 	cloned := *s
 	cloned.messages = cloneMessages(s.messages)
 	return &cloned
+}
+
+func (s *Session) Messages() []llm.Message {
+	return cloneMessages(s.messages)
 }
 
 func (s *Session) logf(format string, args ...any) {

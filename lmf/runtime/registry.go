@@ -3,6 +3,7 @@ package lmf
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 type Registry struct {
@@ -19,6 +20,9 @@ func (r *Registry) Register(fn *Function) error {
 	}
 	if fn.ID == "" {
 		return fmt.Errorf("function ID cannot be empty")
+	}
+	if strings.TrimSpace(fn.WhenToUse) == "" {
+		return fmt.Errorf("function %q must provide non-empty WhenToUse", fn.ID)
 	}
 	if fn.Exec == nil {
 		return fmt.Errorf("function %q has nil Exec", fn.ID)

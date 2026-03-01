@@ -14,14 +14,16 @@ const (
 )
 
 type RunConfig struct {
-	CWD          string
-	Instruction  string
-	Model        string
-	MaxTurns     int
-	Timeout      time.Duration
-	Temperature  float64
-	VerboseLog   io.Writer
-	SystemPrompt string
+	CWD             string
+	Instruction     string
+	Model           string
+	MaxTurns        int
+	Timeout         time.Duration
+	Temperature     float64
+	VerboseLog      io.Writer
+	SystemPrompt    string
+	Tools           []Tool
+	InitialMessages []ConversationMessage
 }
 
 type RunResult struct {
@@ -48,13 +50,15 @@ func (r *defaultRunner) Run(ctx context.Context, cfg RunConfig) (RunResult, erro
 		return RunResult{}, fmt.Errorf("instruction is required")
 	}
 	conversation, err := NewConversation(r.apiKey, ConversationConfig{
-		CWD:          cfg.CWD,
-		Model:        cfg.Model,
-		MaxTurns:     cfg.MaxTurns,
-		Timeout:      cfg.Timeout,
-		Temperature:  cfg.Temperature,
-		VerboseLog:   cfg.VerboseLog,
-		SystemPrompt: cfg.SystemPrompt,
+		CWD:             cfg.CWD,
+		Model:           cfg.Model,
+		MaxTurns:        cfg.MaxTurns,
+		Timeout:         cfg.Timeout,
+		Temperature:     cfg.Temperature,
+		VerboseLog:      cfg.VerboseLog,
+		SystemPrompt:    cfg.SystemPrompt,
+		Tools:           cfg.Tools,
+		InitialMessages: cfg.InitialMessages,
 	})
 	if err != nil {
 		return RunResult{}, err

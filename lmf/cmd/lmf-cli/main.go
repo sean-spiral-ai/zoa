@@ -55,7 +55,7 @@ Commands:
 func runList(registry *lmf.Registry) {
 	items := registry.List()
 	for _, fn := range items {
-		fmt.Printf("%s\t%s\n", fn.ID, fn.Description)
+		fmt.Printf("%s\t%s\n", fn.ID, fn.WhenToUse)
 	}
 }
 

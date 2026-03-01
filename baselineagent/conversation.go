@@ -9,23 +9,25 @@ import (
 
 	"codexagentbase/baselineagent/internal/agent"
 	"codexagentbase/baselineagent/internal/llm"
-	"codexagentbase/baselineagent/internal/tools"
 )
 
 type ConversationConfig struct {
-	CWD          string
-	Model        string
-	MaxTurns     int
-	Timeout      time.Duration
-	Temperature  float64
-	VerboseLog   io.Writer
-	SystemPrompt string
+	CWD             string
+	Model           string
+	MaxTurns        int
+	Timeout         time.Duration
+	Temperature     float64
+	VerboseLog      io.Writer
+	SystemPrompt    string
+	Tools           []Tool
+	InitialMessages []ConversationMessage
 }
 
 type Conversation interface {
 	Prompt(ctx context.Context, instruction string) (RunResult, error)
 	PromptStructured(ctx context.Context, instruction string, format StructuredResponseFormat) (RunResult, error)
 	Fork() Conversation
+	History() []ConversationMessage
 }
 
 type defaultConversation struct {
@@ -88,6 +90,10 @@ func (c *defaultConversation) Fork() Conversation {
 	}
 }
 
+func (c *defaultConversation) History() []ConversationMessage {
+	return fromLLMMessages(c.session.Messages())
+}
+
 func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, time.Duration, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, 0, fmt.Errorf("api key is required")
@@ -109,10 +115,10 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		temperature = DefaultTemperature
 	}
 
-	toolset, err := tools.NewCodingTools(cfg.CWD)
-	if err != nil {
-		return nil, 0, fmt.Errorf("initialize tools: %w", err)
+	if len(cfg.Tools) == 0 {
+		return nil, 0, fmt.Errorf("at least one tool is required")
 	}
+	toolset := cfg.Tools
 
 	systemPrompt := strings.TrimSpace(cfg.SystemPrompt)
 	if systemPrompt == "" {
@@ -121,13 +127,14 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 
 	client := llm.NewGeminiClient(apiKey)
 	session, err := agent.NewSession(agent.SessionConfig{
-		Client:       client,
-		Model:        model,
-		Tools:        toolset,
-		Temperature:  temperature,
-		MaxTurns:     maxTurns,
-		SystemPrompt: systemPrompt,
-		VerboseLog:   cfg.VerboseLog,
+		Client:          client,
+		Model:           model,
+		Tools:           toolset,
+		Temperature:     temperature,
+		MaxTurns:        maxTurns,
+		SystemPrompt:    systemPrompt,
+		VerboseLog:      cfg.VerboseLog,
+		InitialMessages: toLLMMessages(cfg.InitialMessages),
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("create session: %w", err)

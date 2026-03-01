@@ -1,4 +1,4 @@
-package tools
+package builtintools
 
 func NewCodingTools(cwd string) ([]Tool, error) {
 	paths, err := NewPathResolver(cwd)

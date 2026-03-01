@@ -16,3 +16,5 @@ Library:
 
 - package: `codexagentbase/baselineagent`
 - API: `baselineagent.Run(ctx, apiKey, baselineagent.RunConfig{...})`
+- custom tools: `baselineagent.Tool`
+- builtin tool set: `baselineagent.NewBuiltinCodingTools(cwd)`

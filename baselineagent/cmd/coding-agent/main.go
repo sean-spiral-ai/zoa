@@ -48,6 +48,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	toolset, err := baselineagent.NewBuiltinCodingTools(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: initialize tools: %v\n", err)
+		os.Exit(2)
+	}
+
 	result, err := baselineagent.Run(context.Background(), apiKey, baselineagent.RunConfig{
 		CWD:         cwd,
 		Instruction: prompt,
@@ -56,6 +62,7 @@ func main() {
 		Temperature: temperature,
 		Timeout:     time.Duration(timeoutSec) * time.Second,
 		VerboseLog:  verboseWriter(verbose),
+		Tools:       toolset,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent run failed after %d turns: %v\n", result.Turns, err)

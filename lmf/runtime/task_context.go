@@ -47,12 +47,18 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		apiKey = strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
 	}
 
+	toolset, err := baselineagent.NewBuiltinCodingTools(absCWD)
+	if err != nil {
+		return nil, fmt.Errorf("initialize baseline tools: %w", err)
+	}
+
 	baseConfig := baselineagent.ConversationConfig{
 		CWD:         absCWD,
 		Model:       strings.TrimSpace(opts.Model),
 		MaxTurns:    opts.MaxTurns,
 		Timeout:     opts.Timeout,
 		Temperature: opts.Temperature,
+		Tools:       toolset,
 	}
 
 	return &TaskContext{
@@ -181,6 +187,17 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 	}
 	t.apiKey = key
 	return key, nil
+}
+
+func (t *TaskContext) conversationHistory() []baselineagent.ConversationMessage {
+	if t.mainConv == nil {
+		return []baselineagent.ConversationMessage{}
+	}
+	history := t.mainConv.History()
+	if history == nil {
+		return []baselineagent.ConversationMessage{}
+	}
+	return history
 }
 
 type NLConditionError struct {

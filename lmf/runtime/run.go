@@ -25,6 +25,7 @@ func Run(ctx context.Context, fn *Function, input map[string]any) (RunResult, er
 
 	result := RunResult{FunctionID: fn.ID}
 	output, err := fn.Exec(taskCtx, input)
+	result.Conversation = taskCtx.conversationHistory()
 	if output != nil {
 		result.Output = output
 	}
