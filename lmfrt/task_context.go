@@ -2,6 +2,7 @@ package lmfrt
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,9 @@ type TaskContextOptions struct {
 	MaxTurns    int
 	Timeout     time.Duration
 	Temperature float64
+	SQLitePath  string
+
+	sqlDB sqlExecutor
 }
 
 type TaskContext struct {
@@ -26,9 +30,24 @@ type TaskContext struct {
 	apiKey     string
 	baseConfig baselineagent.ConversationConfig
 	mainConv   baselineagent.Conversation
+	sqlDB      sqlExecutor
+	ownsSQL    bool
+}
+
+type SqlExecResult struct {
+	RowsAffected int64  `json:"rows_affected"`
+	LastInsertID *int64 `json:"last_insert_id,omitempty"`
+}
+
+type SqlQueryResult struct {
+	Columns []string         `json:"columns"`
+	Rows    []map[string]any `json:"rows"`
 }
 
 func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cwd := strings.TrimSpace(opts.CWD)
 	if cwd == "" {
 		wd, err := os.Getwd()
@@ -63,17 +82,132 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		Tools:       toolset,
 	}
 	apiKey, _ := baselineagent.ResolveCredential(opts.APIKey, model)
+	sqlDB := opts.sqlDB
+	ownsSQL := false
+	if sqlDB == nil && strings.TrimSpace(opts.SQLitePath) != "" {
+		db, _, err := openSQLite(opts.SQLitePath)
+		if err != nil {
+			return nil, err
+		}
+		sqlDB = db
+		ownsSQL = true
+	}
+	if sqlDB == nil {
+		return nil, fmt.Errorf("sqlite is required for task context")
+	}
 
 	return &TaskContext{
 		ctx:        ctx,
 		apiKey:     apiKey,
 		baseConfig: baseConfig,
 		mainConv:   nil,
+		sqlDB:      sqlDB,
+		ownsSQL:    ownsSQL,
 	}, nil
 }
 
 func (t *TaskContext) Context() context.Context {
 	return t.ctx
+}
+
+func (t *TaskContext) Close() error {
+	if !t.ownsSQL || t.sqlDB == nil {
+		return nil
+	}
+	return t.sqlDB.Close()
+}
+
+func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) {
+	db, err := t.requireSQL()
+	if err != nil {
+		return SqlExecResult{}, err
+	}
+	res, err := db.ExecContext(t.ctx, query, args...)
+	if err != nil {
+		return SqlExecResult{}, err
+	}
+	out := SqlExecResult{}
+	if rowsAffected, err := res.RowsAffected(); err == nil {
+		out.RowsAffected = rowsAffected
+	}
+	if lastInsertID, err := res.LastInsertId(); err == nil {
+		out.LastInsertID = &lastInsertID
+	}
+	return out, nil
+}
+
+func (t *TaskContext) SqlQuery(query string, args ...any) (SqlQueryResult, error) {
+	db, err := t.requireSQL()
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	rows, err := db.QueryContext(t.ctx, query, args...)
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	out := SqlQueryResult{
+		Columns: append([]string(nil), cols...),
+		Rows:    make([]map[string]any, 0),
+	}
+
+	values := make([]any, len(cols))
+	scanArgs := make([]any, len(cols))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(scanArgs...); err != nil {
+			return SqlQueryResult{}, err
+		}
+		item := make(map[string]any, len(cols))
+		for i, name := range cols {
+			item[name] = normalizeSQLValue(values[i])
+		}
+		out.Rows = append(out.Rows, item)
+	}
+	if err := rows.Err(); err != nil {
+		return SqlQueryResult{}, err
+	}
+	return out, nil
+}
+
+func (t *TaskContext) SqlTx(fn func(*sql.Tx) error) error {
+	if fn == nil {
+		return fmt.Errorf("transaction callback cannot be nil")
+	}
+	db, err := t.requireSQL()
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(t.ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (t *TaskContext) requireSQL() (sqlExecutor, error) {
+	if t.sqlDB == nil {
+		return nil, fmt.Errorf("sqlite is not configured for this task context")
+	}
+	return t.sqlDB, nil
+}
+
+func normalizeSQLValue(v any) any {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return v
 }
 
 // NLExec appends to the TaskContext's persistent conversation and returns raw text.

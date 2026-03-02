@@ -2,6 +2,7 @@ package lmfrt
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -42,6 +43,9 @@ type TaskLogRecord struct {
 type TaskManagerOptions struct {
 	// TaskLogDir writes one JSON file per task when set.
 	TaskLogDir string
+	// SQLitePath configures the runtime SQLite database path.
+	// When set, TaskManager opens and owns this connection.
+	SQLitePath string
 }
 
 type taskRecord struct {
@@ -55,46 +59,64 @@ type TaskManager struct {
 	registry *Registry
 	baseCtx  context.Context
 	opts     TaskManagerOptions
+	sqlDB    *sql.DB
 
 	mu     sync.RWMutex
 	nextID uint64
 	tasks  map[string]*taskRecord
 }
 
-func NewTaskManager(registry *Registry, opts TaskManagerOptions) *TaskManager {
+func NewTaskManager(registry *Registry, opts TaskManagerOptions) (*TaskManager, error) {
 	return NewTaskManagerWithContext(context.Background(), registry, opts)
 }
 
-func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts TaskManagerOptions) *TaskManager {
+func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts TaskManagerOptions) (*TaskManager, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &TaskManager{
+	if strings.TrimSpace(opts.SQLitePath) == "" {
+		return nil, fmt.Errorf("sqlite path is required for task manager")
+	}
+	manager := &TaskManager{
 		registry: registry,
 		baseCtx:  ctx,
 		opts:     opts,
 		tasks:    map[string]*taskRecord{},
 	}
+	db, resolvedPath, err := openSQLite(opts.SQLitePath)
+	if err != nil {
+		return nil, err
+	}
+	manager.sqlDB = db
+	manager.opts.SQLitePath = resolvedPath
+	return manager, nil
+}
+
+func (m *TaskManager) Close() error {
+	if m == nil || m.sqlDB == nil {
+		return nil
+	}
+	return m.sqlDB.Close()
 }
 
 func (m *TaskManager) Spawn(functionID string, input map[string]any) (string, error) {
-	if m == nil {
-		return "", fmt.Errorf("task manager is nil")
+	fn, mergedInput, err := m.resolveFunctionInput(functionID, input)
+	if err != nil {
+		return "", err
 	}
-	if m.registry == nil {
-		return "", fmt.Errorf("task manager registry is nil")
-	}
-	fn, ok := m.registry.Get(functionID)
-	if !ok {
-		return "", fmt.Errorf("unknown function: %s", functionID)
-	}
-
-	mergedInput := cloneMapAny(input)
 	taskID, rec := m.newRecord(functionID, mergedInput)
 	_ = m.persistTask(taskID)
 
 	go m.runTask(fn, rec, mergedInput)
 	return taskID, nil
+}
+
+func (m *TaskManager) Run(functionID string, input map[string]any) (RunResult, error) {
+	fn, mergedInput, err := m.resolveFunctionInput(functionID, input)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return m.runFunction(fn, mergedInput)
 }
 
 func (m *TaskManager) Wait(taskID string, timeout time.Duration) (TaskSnapshot, bool, error) {
@@ -142,7 +164,7 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	m.mu.Unlock()
 	_ = m.persistTask(rec.TaskID)
 
-	res, err := Run(m.baseCtx, fn, input)
+	res, err := m.runFunction(fn, input)
 
 	end := time.Now().UTC()
 	m.mu.Lock()
@@ -160,6 +182,54 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	m.mu.Unlock()
 	_ = m.persistTask(taskID)
 	close(done)
+}
+
+func (m *TaskManager) resolveFunctionInput(functionID string, input map[string]any) (*Function, map[string]any, error) {
+	if m == nil {
+		return nil, nil, fmt.Errorf("task manager is nil")
+	}
+	if m.registry == nil {
+		return nil, nil, fmt.Errorf("task manager registry is nil")
+	}
+	fn, ok := m.registry.Get(functionID)
+	if !ok {
+		return nil, nil, fmt.Errorf("unknown function: %s", functionID)
+	}
+	return fn, cloneMapAny(input), nil
+}
+
+func (m *TaskManager) runFunction(fn *Function, input map[string]any) (RunResult, error) {
+	if fn == nil {
+		return RunResult{}, fmt.Errorf("function is nil")
+	}
+	if fn.Exec == nil {
+		return RunResult{}, fmt.Errorf("function %q has nil Exec", fn.ID)
+	}
+	if input == nil {
+		input = map[string]any{}
+	}
+
+	tcOpts := taskContextOptionsFromInput(input)
+	tcOpts.SQLitePath = m.opts.SQLitePath
+	tcOpts.sqlDB = m.sqlDB
+	taskCtx, err := NewTaskContext(m.baseCtx, tcOpts)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer func() {
+		_ = taskCtx.Close()
+	}()
+
+	result := RunResult{FunctionID: fn.ID}
+	output, err := fn.Exec(taskCtx, input)
+	result.Conversation = taskCtx.conversationHistory()
+	if output != nil {
+		result.Output = output
+	}
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (m *TaskManager) newRecord(functionID string, input map[string]any) (string, *taskRecord) {
@@ -257,6 +327,48 @@ func cloneMapAny(in map[string]any) map[string]any {
 		out[k] = cloneAny(v)
 	}
 	return out
+}
+
+func taskContextOptionsFromInput(input map[string]any) TaskContextOptions {
+	opts := TaskContextOptions{}
+	if v, ok := input["cwd"].(string); ok {
+		opts.CWD = strings.TrimSpace(v)
+	}
+	if v, ok := input["model"].(string); ok {
+		opts.Model = strings.TrimSpace(v)
+	}
+	if v, ok := numberAsInt(input["max_turns"]); ok {
+		opts.MaxTurns = v
+	}
+	if v, ok := numberAsInt(input["timeout_sec"]); ok && v > 0 {
+		opts.Timeout = time.Duration(v) * time.Second
+	}
+	if v, ok := numberAsFloat(input["temperature"]); ok {
+		opts.Temperature = v
+	}
+	return opts
+}
+
+func numberAsInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+func numberAsFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func cloneAny(v any) any {

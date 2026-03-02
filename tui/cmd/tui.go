@@ -65,9 +65,19 @@ func main() {
 	}
 
 	registry := intrinsic.NewRegistry()
-	taskManager := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
 		TaskLogDir: filepath.Join(sessionDir, "tasks"),
+		SQLitePath: filepath.Join(sessionDir, "state.db"),
 	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing task manager: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := taskManager.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: close task manager: %v\n", err)
+		}
+	}()
 
 	lmfTools, err := lmfrt.NewLMFunctionTools(registry, taskManager)
 	if err != nil {

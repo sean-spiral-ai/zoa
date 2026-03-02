@@ -4,20 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	baselineagent "zoa/baselineagent"
-	lmf "zoa/lmfrt"
+	lmfrt "zoa/lmfrt"
 )
 
 func TestProgrammaticGuard(t *testing.T) {
-	guard := &lmf.Function{
+	guard := &lmfrt.Function{
 		ID:        "test.local.programmatic_guard",
 		WhenToUse: "test only",
 		Schema:    map[string]any{"type": "object"},
-		Exec: func(_ *lmf.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(_ *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 			raw, ok := input["value"]
 			if !ok {
 				return nil, fmt.Errorf("missing value")
@@ -41,14 +42,32 @@ func TestProgrammaticGuard(t *testing.T) {
 	}
 
 	t.Run("fails for non-positive", func(t *testing.T) {
-		_, err := lmf.Run(context.Background(), guard, map[string]any{"value": 0})
+		registry := lmfrt.NewRegistry()
+		registry.MustRegister(guard)
+		manager, err := lmfrt.NewTaskManagerWithContext(context.Background(), registry, lmfrt.TaskManagerOptions{
+			SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+		})
+		if err != nil {
+			t.Fatalf("create task manager: %v", err)
+		}
+		defer func() { _ = manager.Close() }()
+		_, err = manager.Run(guard.ID, map[string]any{"value": 0})
 		if err == nil {
 			t.Fatalf("expected error for non-positive value")
 		}
 	})
 
 	t.Run("passes for positive", func(t *testing.T) {
-		res, err := lmf.Run(context.Background(), guard, map[string]any{"value": 5})
+		registry := lmfrt.NewRegistry()
+		registry.MustRegister(guard)
+		manager, err := lmfrt.NewTaskManagerWithContext(context.Background(), registry, lmfrt.TaskManagerOptions{
+			SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+		})
+		if err != nil {
+			t.Fatalf("create task manager: %v", err)
+		}
+		defer func() { _ = manager.Close() }()
+		res, err := manager.Run(guard.ID, map[string]any{"value": 5})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -63,12 +82,12 @@ func TestNLExecContextMemory(t *testing.T) {
 	model := requireModel(t)
 	tc := newTaskContext(t, model)
 
-	first, err := lmf.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
+	first, err := lmfrt.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("first nlexec failed: %v", err)
 	}
 
-	second, err := lmf.NLExecTyped[int](tc, "What number did you just return? Return JSON number only.", nil)
+	second, err := lmfrt.NLExecTyped[int](tc, "What number did you just return? Return JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("second nlexec failed: %v", err)
 	}
@@ -85,7 +104,7 @@ func TestNLConditionIsolation(t *testing.T) {
 	model := requireModel(t)
 	tc := newTaskContext(t, model)
 
-	first, err := lmf.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
+	first, err := lmfrt.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("first nlexec failed: %v", err)
 	}
@@ -102,7 +121,7 @@ func TestNLConditionIsolation(t *testing.T) {
 		t.Fatalf("condition failed unexpectedly: %v", err)
 	}
 
-	second, err := lmf.NLExecTyped[int](tc, "What number did you just return earlier? Return JSON number only.", nil)
+	second, err := lmfrt.NLExecTyped[int](tc, "What number did you just return earlier? Return JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("second nlexec failed: %v", err)
 	}
@@ -124,7 +143,7 @@ func TestNLConditionFailure(t *testing.T) {
 		t.Fatalf("expected NL condition failure")
 	}
 
-	var condErr *lmf.NLConditionError
+	var condErr *lmfrt.NLConditionError
 	if !asConditionErr(err, &condErr) {
 		t.Fatalf("expected NLConditionError, got: %T %v", err, err)
 	}
@@ -174,14 +193,15 @@ func requireModel(t *testing.T) string {
 	return ""
 }
 
-func newTaskContext(t *testing.T, model string) *lmf.TaskContext {
+func newTaskContext(t *testing.T, model string) *lmfrt.TaskContext {
 	t.Helper()
-	tc, err := lmf.NewTaskContext(context.Background(), lmf.TaskContextOptions{
+	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
 		CWD:         t.TempDir(),
 		Model:       model,
 		MaxTurns:    24,
 		Timeout:     120 * time.Second,
 		Temperature: 0,
+		SQLitePath:  filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
 		t.Fatalf("create task context: %v", err)
@@ -189,6 +209,6 @@ func newTaskContext(t *testing.T, model string) *lmf.TaskContext {
 	return tc
 }
 
-func asConditionErr(err error, target **lmf.NLConditionError) bool {
+func asConditionErr(err error, target **lmfrt.NLConditionError) bool {
 	return errors.As(err, target)
 }
