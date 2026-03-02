@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"zoa/lmflib"
 	lmfrt "zoa/lmfrt"
 )
 
@@ -26,7 +27,7 @@ Final response:
 - Summarize what changed and validation status.
 `
 
-func IntrinsicModifyCodebase() *lmfrt.Function {
+func intrinsicModifyCodebase() *lmfrt.Function {
 	return &lmfrt.Function{
 		ID:        "intrinsic.modify_codebase",
 		WhenToUse: "Use when you need autonomous code edits in a workspace with verification (build/test/lint) and a human-readable change summary.",
@@ -43,7 +44,7 @@ func IntrinsicModifyCodebase() *lmfrt.Function {
 }
 
 func runIntrinsicModifyCodebase(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
-	cwd, err := stringInput(input, "cwd", true)
+	cwd, err := lmflib.StringInput(input, "cwd", true)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +52,7 @@ func runIntrinsicModifyCodebase(tc *lmfrt.TaskContext, input map[string]any) (ma
 		return nil, fmt.Errorf("cwd cannot be empty")
 	}
 
-	instruction, err := stringInput(input, "instruction", true)
+	instruction, err := lmflib.StringInput(input, "instruction", true)
 	if err != nil {
 		return nil, err
 	}

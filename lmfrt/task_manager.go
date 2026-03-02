@@ -119,6 +119,24 @@ func (m *TaskManager) Run(functionID string, input map[string]any) (RunResult, e
 	return m.runFunction(fn, mergedInput)
 }
 
+func (m *TaskManager) Init() error {
+	if m == nil {
+		return fmt.Errorf("task manager is nil")
+	}
+	if m.registry == nil {
+		return fmt.Errorf("task manager registry is nil")
+	}
+	for _, fn := range m.registry.List() {
+		if !strings.HasSuffix(fn.ID, ".__init__") {
+			continue
+		}
+		if _, err := m.Run(fn.ID, map[string]any{}); err != nil {
+			return fmt.Errorf("run init function %q: %w", fn.ID, err)
+		}
+	}
+	return nil
+}
+
 func (m *TaskManager) Wait(taskID string, timeout time.Duration) (TaskSnapshot, bool, error) {
 	rec, err := m.getRecord(taskID)
 	if err != nil {

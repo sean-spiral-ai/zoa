@@ -11,7 +11,6 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
-	"zoa/gateway"
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
 	lmfrt "zoa/lmfrt"
@@ -31,7 +30,7 @@ func main() {
 	)
 
 	flag.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
-	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway snapshot/task-log persistence")
+	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway sqlite/task-log persistence")
 	flag.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	flag.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	flag.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
@@ -53,9 +52,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	apiKey, ok := baselineagent.ResolveCredential("", model)
+	_, ok := baselineagent.ResolveCredential("", model)
 	if !ok {
-		apiKey = ""
 		envVar := baselineagent.RequiredCredentialEnvVarForModel(model)
 		fmt.Fprintf(
 			os.Stderr,
@@ -64,7 +62,11 @@ func main() {
 		)
 	}
 
-	registry := intrinsic.NewRegistry()
+	registry := lmfrt.NewRegistry()
+	if err := intrinsic.RegisterFunctions(registry); err != nil {
+		fmt.Fprintf(os.Stderr, "error registering intrinsic functions: %v\n", err)
+		os.Exit(1)
+	}
 	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
 		TaskLogDir: filepath.Join(sessionDir, "tasks"),
 		SQLitePath: filepath.Join(sessionDir, "state.db"),
@@ -79,38 +81,12 @@ func main() {
 		}
 	}()
 
-	lmfTools, err := lmfrt.NewLMFunctionTools(registry, taskManager)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing LMFunction tools: %v\n", err)
-		os.Exit(1)
-	}
-	builtinTools, err := baselineagent.NewBuiltinCodingTools(cwd)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing builtin tools: %v\n", err)
-		os.Exit(1)
-	}
-
-	allTools := append([]baselineagent.Tool{}, builtinTools...)
-	allTools = append(allTools, lmfTools...)
-
-	service, err := gateway.NewService(gateway.ServiceConfig{
-		SessionDir:  sessionDir,
-		TaskLogDir:  filepath.Join(sessionDir, "tasks"),
-		APIKey:      apiKey,
-		CWD:         cwd,
-		Model:       model,
-		MaxTurns:    maxTurns,
-		Timeout:     time.Duration(timeoutSec) * time.Second,
-		Temperature: temperature,
-		Tools:       allTools,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing gateway service: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := gatewaylmf.RegisterFunctions(registry, service); err != nil {
+	if err := gatewaylmf.RegisterFunctions(registry); err != nil {
 		fmt.Fprintf(os.Stderr, "error registering gateway functions: %v\n", err)
+		os.Exit(1)
+	}
+	if err := taskManager.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "error running init functions: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -120,7 +96,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollOutbox(ctx, service, time.Duration(pollMs)*time.Millisecond)
+	go pollOutbox(ctx, taskManager, time.Duration(pollMs)*time.Millisecond)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -137,13 +113,14 @@ func main() {
 		}
 
 		taskID, err := taskManager.Spawn("gateway.recv", map[string]any{
-			"channel":     "tui",
-			"message":     line,
-			"cwd":         cwd,
-			"model":       model,
-			"max_turns":   maxTurns,
-			"timeout_sec": timeoutSec,
-			"temperature": temperature,
+			"channel":      "tui",
+			"message":      line,
+			"task_log_dir": filepath.Join(sessionDir, "tasks"),
+			"cwd":          cwd,
+			"model":        model,
+			"max_turns":    maxTurns,
+			"timeout_sec":  timeoutSec,
+			"temperature":  temperature,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "recv spawn error: %v\n", err)
@@ -157,7 +134,7 @@ func main() {
 	}
 }
 
-func pollOutbox(ctx context.Context, service *gateway.Service, interval time.Duration) {
+func pollOutbox(ctx context.Context, taskManager *lmfrt.TaskManager, interval time.Duration) {
 	if interval <= 0 {
 		interval = 400 * time.Millisecond
 	}
@@ -170,13 +147,111 @@ func pollOutbox(ctx context.Context, service *gateway.Service, interval time.Dur
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			messages := service.OutboxSince(lastID)
+			res, err := taskManager.Run("gateway.outbox_since", map[string]any{
+				"channel": "tui",
+				"last_id": lastID,
+				"limit":   100,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "outbox poll error: %v\n", err)
+				continue
+			}
+			messages, maxID := outboxMessagesFromRunOutput(res.Output, lastID)
 			for _, msg := range messages {
 				fmt.Printf("\n[%s #%d] %s\n", msg.Channel, msg.ID, msg.Text)
-				if msg.ID > lastID {
-					lastID = msg.ID
-				}
+			}
+			lastID = maxID
+		}
+	}
+}
+
+type outboxMessage struct {
+	ID        int64
+	Channel   string
+	Text      string
+	InReplyTo int64
+}
+
+func outboxMessagesFromRunOutput(output map[string]any, fallbackLastID int64) ([]outboxMessage, int64) {
+	if output == nil {
+		return nil, fallbackLastID
+	}
+
+	maxID := fallbackLastID
+	if v, ok := int64Value(output["max_id"]); ok && v > maxID {
+		maxID = v
+	}
+
+	rawMessages, ok := output["messages"]
+	if !ok || rawMessages == nil {
+		return nil, maxID
+	}
+
+	items := []outboxMessage{}
+	switch typed := rawMessages.(type) {
+	case []map[string]any:
+		for _, item := range typed {
+			msg, ok := outboundMessageFromMap(item)
+			if !ok {
+				continue
+			}
+			items = append(items, msg)
+			if msg.ID > maxID {
+				maxID = msg.ID
 			}
 		}
+	case []any:
+		for _, row := range typed {
+			item, ok := row.(map[string]any)
+			if !ok {
+				continue
+			}
+			msg, ok := outboundMessageFromMap(item)
+			if !ok {
+				continue
+			}
+			items = append(items, msg)
+			if msg.ID > maxID {
+				maxID = msg.ID
+			}
+		}
+	}
+	return items, maxID
+}
+
+func outboundMessageFromMap(item map[string]any) (outboxMessage, bool) {
+	id, ok := int64Value(item["id"])
+	if !ok {
+		return outboxMessage{}, false
+	}
+	channel, ok := item["channel"].(string)
+	if !ok {
+		return outboxMessage{}, false
+	}
+	text, ok := item["text"].(string)
+	if !ok {
+		return outboxMessage{}, false
+	}
+	msg := outboxMessage{
+		ID:      id,
+		Channel: channel,
+		Text:    text,
+	}
+	if replyID, ok := int64Value(item["in_reply_to"]); ok {
+		msg.InReplyTo = replyID
+	}
+	return msg, true
+}
+
+func int64Value(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	default:
+		return 0, false
 	}
 }
