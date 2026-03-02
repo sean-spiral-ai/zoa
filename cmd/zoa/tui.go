@@ -11,10 +11,13 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	diverseideation "zoa/lmflib/diverse_ideation"
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
 	lmfrt "zoa/lmfrt"
 )
+
+const defaultGatewaySession = "default"
 
 func runTUI(args []string) int {
 	defaultCWD := "/"
@@ -94,6 +97,10 @@ func runTUI(args []string) int {
 		fmt.Fprintf(os.Stderr, "error registering gateway functions: %v\n", err)
 		return 1
 	}
+	if err := diverseideation.RegisterFunctions(registry); err != nil {
+		fmt.Fprintf(os.Stderr, "error registering diverse_ideation functions: %v\n", err)
+		return 1
+	}
 	if err := taskManager.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "error running init functions: %v\n", err)
 		return 1
@@ -121,20 +128,25 @@ func runTUI(args []string) int {
 			break
 		}
 
-		taskID, err := taskManager.Spawn("gateway.recv", map[string]any{
-			"channel":     "tui",
+		recvSnapshot, err := runAndWait(taskManager, "gateway.recv", map[string]any{
+			"session":     defaultGatewaySession,
 			"message":     line,
 			"cwd":         cwd,
 			"model":       model,
 			"max_turns":   maxTurns,
 			"timeout_sec": timeoutSec,
 			"temperature": temperature,
-		})
+		}, lmfrt.SpawnOptions{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "recv spawn error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "recv enqueue error: %v\n", err)
 			continue
 		}
-		fmt.Printf("[recv task %s queued]\n", taskID)
+		inboundIDText := "unknown"
+		if inboundID, ok := int64Value(recvSnapshot.Output["inbound_id"]); ok && inboundID > 0 {
+			inboundIDText = fmt.Sprintf("%d", inboundID)
+		}
+		fmt.Printf("[recv inbound %s queued]\n", inboundIDText)
+
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -157,27 +169,51 @@ func pollOutbox(ctx context.Context, taskManager *lmfrt.TaskManager, interval ti
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			res, err := taskManager.Run("gateway.outbox_since", map[string]any{
-				"channel": "tui",
+			snapshot, err := runAndWait(taskManager, "gateway.outbox_since", map[string]any{
+				"session": defaultGatewaySession,
 				"last_id": lastID,
 				"limit":   100,
-			})
+			}, lmfrt.SpawnOptions{HideInLogByDefault: true})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "outbox poll error: %v\n", err)
 				continue
 			}
-			messages, maxID := outboxMessagesFromRunOutput(res.Output, lastID)
+			messages, maxID := outboxMessagesFromRunOutput(snapshot.Output, lastID)
 			for _, msg := range messages {
-				fmt.Printf("\n[%s #%d] %s\n", msg.Channel, msg.ID, msg.Text)
+				fmt.Printf("\n[%s #%d] %s\n", msg.Session, msg.ID, msg.Text)
 			}
 			lastID = maxID
 		}
 	}
 }
 
+func runAndWait(taskManager *lmfrt.TaskManager, functionID string, input map[string]any, opts lmfrt.SpawnOptions) (lmfrt.TaskSnapshot, error) {
+	if taskManager == nil {
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("task manager is nil")
+	}
+	taskID, err := taskManager.Spawn(functionID, input, opts)
+	if err != nil {
+		return lmfrt.TaskSnapshot{}, err
+	}
+	snapshot, _, err := taskManager.Wait(taskID, 0)
+	if err != nil {
+		return lmfrt.TaskSnapshot{}, err
+	}
+	if snapshot.Status == lmfrt.TaskStatusFailed {
+		if strings.TrimSpace(snapshot.Error) == "" {
+			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+		}
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+	}
+	if snapshot.Status != lmfrt.TaskStatusDone {
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
+	}
+	return snapshot, nil
+}
+
 type outboxMessage struct {
 	ID        int64
-	Channel   string
+	Session   string
 	Text      string
 	InReplyTo int64
 }
@@ -234,7 +270,7 @@ func outboundMessageFromMap(item map[string]any) (outboxMessage, bool) {
 	if !ok {
 		return outboxMessage{}, false
 	}
-	channel, ok := item["channel"].(string)
+	session, ok := item["session"].(string)
 	if !ok {
 		return outboxMessage{}, false
 	}
@@ -244,7 +280,7 @@ func outboundMessageFromMap(item map[string]any) (outboxMessage, bool) {
 	}
 	msg := outboxMessage{
 		ID:      id,
-		Channel: channel,
+		Session: session,
 		Text:    text,
 	}
 	if replyID, ok := int64Value(item["in_reply_to"]); ok {

@@ -11,21 +11,48 @@ import (
 	baselineagent "zoa/baselineagent"
 	"zoa/lmflib"
 	lmfrt "zoa/lmfrt"
+	"zoa/reliable"
 )
 
-const defaultChatSystemPrompt = `You are an assistant in a persistent chat session.
+const (
+	defaultGatewaySession   = "default"
+	defaultChatSystemPrompt = `You are an assistant in a persistent chat session.
 Use tools when they help. Be concise and factual.`
+	defaultPumpLimit       = 1
+	defaultOutboxPollLimit = 100
+	maxOutboxPollLimit     = 500
+	maxPumpLimit           = 200
+	inboundLeaseDuration   = 2 * time.Minute
+)
 
 func initFunction() *lmfrt.Function {
 	return &lmfrt.Function{
 		ID:        "gateway.__init__",
 		WhenToUse: "Run on startup to ensure gateway SQLite schema exists and is ready.",
-		Schema: map[string]any{
+		InputSchema: map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ok": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"ok"},
+		},
 		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
 			if err := newState(tc).init(); err != nil {
+				return nil, err
+			}
+			if err := tc.RegisterPump(
+				"gateway.default.pump",
+				"gateway.pump",
+				map[string]any{
+					"session": defaultGatewaySession,
+					"limit":   1,
+				},
+				time.Second,
+			); err != nil {
 				return nil, err
 			}
 			return map[string]any{"ok": true}, nil
@@ -36,11 +63,11 @@ func initFunction() *lmfrt.Function {
 func recvFunction() *lmfrt.Function {
 	return &lmfrt.Function{
 		ID:        "gateway.recv",
-		WhenToUse: "Use at channel ingress to persist and process a user message into gateway outbox.",
-		Schema: map[string]any{
+		WhenToUse: "Queue a user message into a gateway session for ordered processing.",
+		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"channel":     map[string]any{"type": "string", "description": "Source channel identifier (defaults to tui)"},
+				"session":     map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
 				"message":     map[string]any{"type": "string", "description": "Raw user message text"},
 				"cwd":         map[string]any{"type": "string"},
 				"model":       map[string]any{"type": "string"},
@@ -50,82 +77,234 @@ func recvFunction() *lmfrt.Function {
 			},
 			"required": []string{"message"},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"accepted":   map[string]any{"type": "boolean"},
+				"session":    map[string]any{"type": "string"},
+				"inbound_id": map[string]any{"type": "integer"},
+				"decision":   map[string]any{"type": "string"},
+				"queue_len":  map[string]any{"type": "integer"},
+			},
+			"required": []string{"accepted", "session", "inbound_id", "decision", "queue_len"},
+		},
 		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
-
-			channel, err := lmflib.StringInput(input, "channel", false)
+			session, err := gatewaySessionInput(input)
 			if err != nil {
 				return nil, err
-			}
-			if strings.TrimSpace(channel) == "" {
-				channel = "tui"
 			}
 			message, err := lmflib.StringInput(input, "message", true)
 			if err != nil {
 				return nil, err
 			}
-
-			now := time.Now().UTC()
-			inboundID, err := state.insertInbound(channel, message, now)
+			pumpInput, err := inboundPumpInputFromRecvInput(input)
 			if err != nil {
 				return nil, err
 			}
-
-			if strings.HasPrefix(strings.TrimSpace(message), "/") {
-				reply, err := renderSlashResponse(state, tc, message)
-				if err != nil {
-					return nil, err
-				}
-				outID, err := state.insertOutbox(channel, reply, nil, now)
-				if err != nil {
-					return nil, err
-				}
-				return map[string]any{
-					"accepted":   true,
-					"message_id": outID,
-					"decision":   "slash_handled",
-					"queue_len":  0,
-				}, nil
-			}
-
-			reply, err := processChatMessage(state, input, message)
+			inboundID, err := state.insertInbound(session, message, pumpInput, time.Now().UTC())
 			if err != nil {
-				reply = fmt.Sprintf("Failed to process message %d: %v", inboundID, err)
+				return nil, err
 			}
-			if _, err := state.insertOutbox(channel, reply, &inboundID, time.Now().UTC()); err != nil {
+			decision := "queued"
+			if _, err := tc.Spawn("gateway.pump", map[string]any{
+				"session": session,
+				"limit":   1,
+			}, lmfrt.SpawnOptions{HideInLogByDefault: true}); err == nil {
+				decision = "queued_pump_triggered"
+			} else {
+				decision = "queued_pump_trigger_failed"
+			}
+			pending, err := state.pendingCount(session)
+			if err != nil {
 				return nil, err
 			}
 			return map[string]any{
 				"accepted":   true,
-				"message_id": inboundID,
-				"decision":   "processed",
-				"queue_len":  0,
+				"session":    session,
+				"inbound_id": inboundID,
+				"decision":   decision,
+				"queue_len":  pending,
 			}, nil
 		},
+	}
+}
+
+func pumpFunction() *lmfrt.Function {
+	return &lmfrt.Function{
+		ID:        "gateway.pump",
+		WhenToUse: "Process queued inbound messages for a gateway session in strict id order.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session": map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
+				"limit":   map[string]any{"type": "integer", "description": "Maximum queued messages to process (default 1, max 200)"},
+			},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session":         map[string]any{"type": "string"},
+				"processed":       map[string]any{"type": "integer"},
+				"queue_len":       map[string]any{"type": "integer"},
+				"last_inbound_id": map[string]any{"type": "integer"},
+				"last_outbox_id":  map[string]any{"type": "integer"},
+			},
+			"required": []string{"session", "processed", "queue_len", "last_inbound_id", "last_outbox_id"},
+		},
+		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+			state := newState(tc)
+			session, err := gatewaySessionInput(input)
+			if err != nil {
+				return nil, err
+			}
+			limit, err := lmflib.IntInput(input, "limit", false)
+			if err != nil {
+				return nil, err
+			}
+			if limit <= 0 {
+				limit = defaultPumpLimit
+			}
+			if limit > maxPumpLimit {
+				limit = maxPumpLimit
+			}
+
+			processed := 0
+			lastInboundID := int64(0)
+			lastOutboxID := int64(0)
+			completer := newInboundJobCompleter(state, tc, session, &lastOutboxID)
+			for processed < limit {
+				outcome, err := completer.CompleteOne(tc.Context())
+				if err != nil {
+					return nil, err
+				}
+				if !outcome.Claimed {
+					break
+				}
+				processed++
+				lastInboundID = outcome.JobID
+			}
+
+			pending, err := state.pendingCount(session)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"session":         session,
+				"processed":       processed,
+				"queue_len":       pending,
+				"last_inbound_id": lastInboundID,
+				"last_outbox_id":  lastOutboxID,
+			}, nil
+		},
+	}
+}
+
+type inboundPumpJob struct {
+	row   *inboundRow
+	reply string
+}
+
+func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
+	return &reliable.JobCompleter[inboundPumpJob]{
+		ClaimDue: func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
+			row, err := state.claimDueInbound(session, now, inboundLeaseDuration)
+			if err != nil {
+				return nil, err
+			}
+			if row == nil {
+				return nil, nil
+			}
+			return &reliable.ClaimedJob[inboundPumpJob]{
+				ID:      row.ID,
+				Attempt: row.Attempt,
+				Value: inboundPumpJob{
+					row: row,
+				},
+			}, nil
+		},
+		Handle: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob]) error {
+			reply, err := processInboundMessage(state, tc, job.Value.row)
+			if err != nil {
+				return err
+			}
+			job.Value.reply = reply
+			return nil
+		},
+		Complete: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time) error {
+			outboxID, err := state.insertOutbox(session, job.Value.reply, &job.ID, now)
+			if err != nil {
+				return err
+			}
+			if err := state.markInboundDone(job.ID, now); err != nil {
+				return err
+			}
+			if lastOutboxID != nil && outboxID > 0 {
+				*lastOutboxID = outboxID
+			}
+			return nil
+		},
+		Retry: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error, delay time.Duration) error {
+			return state.markInboundRetry(job.ID, cause.Error(), now.Add(delay))
+		},
+		Fail: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error) error {
+			reply := fmt.Sprintf("Failed to process message %d: %v", job.ID, cause)
+			outboxID, err := state.insertOutbox(session, reply, &job.ID, now)
+			if err != nil {
+				return err
+			}
+			if err := state.markInboundFailed(job.ID, cause.Error(), now); err != nil {
+				return err
+			}
+			if lastOutboxID != nil && outboxID > 0 {
+				*lastOutboxID = outboxID
+			}
+			return nil
+		},
+		ShouldRetry: isRetryableInboundError,
+		Backoff:     inboundRetryBackoff,
 	}
 }
 
 func outboxSinceFunction() *lmfrt.Function {
 	return &lmfrt.Function{
 		ID:        "gateway.outbox_since",
-		WhenToUse: "Use to poll outbound gateway messages since the last seen message id for a channel.",
-		Schema: map[string]any{
+		WhenToUse: "Poll outbound gateway messages since last seen id for a session.",
+		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"channel": map[string]any{"type": "string", "description": "Channel identifier filter (defaults to tui)"},
+				"session": map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
 				"last_id": map[string]any{"type": "integer", "description": "Return messages with id greater than this value"},
 				"limit":   map[string]any{"type": "integer", "description": "Maximum number of messages to return (default 100, max 500)"},
 			},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session": map[string]any{"type": "string"},
+				"count":   map[string]any{"type": "integer"},
+				"messages": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":          map[string]any{"type": "integer"},
+							"session":     map[string]any{"type": "string"},
+							"text":        map[string]any{"type": "string"},
+							"in_reply_to": map[string]any{"type": "integer"},
+							"sent_at":     map[string]any{"type": "string"},
+						},
+					},
+				},
+				"max_id": map[string]any{"type": "integer"},
+			},
+			"required": []string{"session", "count", "messages", "max_id"},
+		},
 		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
-
-			channel, err := lmflib.StringInput(input, "channel", false)
+			session, err := gatewaySessionInput(input)
 			if err != nil {
 				return nil, err
-			}
-			if strings.TrimSpace(channel) == "" {
-				channel = "tui"
 			}
 
 			lastID, err := lmflib.Int64Input(input, "last_id", false)
@@ -137,13 +316,13 @@ func outboxSinceFunction() *lmfrt.Function {
 				return nil, err
 			}
 			if limit <= 0 {
-				limit = 100
+				limit = defaultOutboxPollLimit
 			}
-			if limit > 500 {
-				limit = 500
+			if limit > maxOutboxPollLimit {
+				limit = maxOutboxPollLimit
 			}
 
-			rows, err := state.outboxSince(channel, lastID, limit)
+			rows, err := state.outboxSince(session, lastID, limit)
 			if err != nil {
 				return nil, err
 			}
@@ -153,7 +332,7 @@ func outboxSinceFunction() *lmfrt.Function {
 			for _, row := range rows {
 				items = append(items, map[string]any{
 					"id":          row.ID,
-					"channel":     row.Channel,
+					"session":     row.Session,
 					"text":        row.Text,
 					"in_reply_to": row.InReplyTo,
 					"sent_at":     row.SentAt,
@@ -163,7 +342,7 @@ func outboxSinceFunction() *lmfrt.Function {
 				}
 			}
 			return map[string]any{
-				"channel":  channel,
+				"session":  session,
 				"count":    len(items),
 				"messages": items,
 				"max_id":   maxID,
@@ -172,7 +351,21 @@ func outboxSinceFunction() *lmfrt.Function {
 	}
 }
 
-func processChatMessage(state *state, input map[string]any, message string) (string, error) {
+func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow) (string, error) {
+	if row == nil {
+		return "", fmt.Errorf("inbound row is nil")
+	}
+	if strings.HasPrefix(strings.TrimSpace(row.Text), "/") {
+		return renderSlashResponse(state, tc, row.Session, row.Text)
+	}
+	input := cloneMapAnyLocal(row.PumpInput)
+	if input == nil {
+		input = map[string]any{}
+	}
+	return processChatMessage(state, tc, input, row.Session, row.Text)
+}
+
+func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]any, session string, message string) (string, error) {
 	model, err := lmflib.StringInput(input, "model", false)
 	if err != nil {
 		return "", err
@@ -229,7 +422,7 @@ func processChatMessage(state *state, input map[string]any, message string) (str
 		timeoutSec = 300
 	}
 
-	history, err := state.loadConversationHistory()
+	history, err := state.loadConversationHistory(session)
 	if err != nil {
 		return "", err
 	}
@@ -237,6 +430,11 @@ func processChatMessage(state *state, input map[string]any, message string) (str
 	if err != nil {
 		return "", fmt.Errorf("initialize builtin tools: %w", err)
 	}
+	lmfTools, err := tc.NewLmFunctionTools()
+	if err != nil {
+		return "", fmt.Errorf("initialize lmfunction tools: %w", err)
+	}
+	tools = append(tools, lmfTools...)
 	conv, err := baselineagent.NewConversation(apiKey, baselineagent.ConversationConfig{
 		CWD:             absCWD,
 		Model:           model,
@@ -255,9 +453,15 @@ func processChatMessage(state *state, input map[string]any, message string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := state.saveConversationHistory(conv.History(), time.Now().UTC()); err != nil {
+	allHistory := conv.History()
+	newStart := len(history)
+	if newStart < 0 || newStart > len(allHistory) {
+		newStart = 0
+	}
+	if err := state.appendConversationMessages(session, allHistory[newStart:], time.Now().UTC()); err != nil {
 		return "", err
 	}
+
 	text := strings.TrimSpace(res.FinalResponse)
 	if text == "" {
 		text = "(no response)"
@@ -265,42 +469,59 @@ func processChatMessage(state *state, input map[string]any, message string) (str
 	return text, nil
 }
 
-func renderSlashResponse(state *state, tc *lmfrt.TaskContext, text string) (string, error) {
+func renderSlashResponse(state *state, tc *lmfrt.TaskContext, session string, text string) (string, error) {
 	command := strings.Fields(strings.TrimSpace(text))
 	if len(command) == 0 {
 		return "", fmt.Errorf("invalid command")
 	}
+	session = normalizeSession(session)
+	if session == "" {
+		session = defaultGatewaySession
+	}
+
 	switch command[0] {
 	case "/status":
-		outboxCount, err := state.outboxCount()
+		outboxCount, err := state.outboxCount(session)
+		if err != nil {
+			return "", err
+		}
+		pendingCount, err := state.pendingCount(session)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(
-			"Session: default\nState: idle\nActive: none\nQueue: 0\nOutbox: %d",
+			"Session: %s\nState: idle\nActive: none\nQueue: %d\nOutbox: %d",
+			session,
+			pendingCount,
 			outboxCount,
 		), nil
 	case "/queue":
-		return "Queue is empty.", nil
+		pendingCount, err := state.pendingCount(session)
+		if err != nil {
+			return "", err
+		}
+		if pendingCount == 0 {
+			return "Queue is empty.", nil
+		}
+		return fmt.Sprintf("Queue has %d pending message(s).", pendingCount), nil
 	case "/outbox":
-		rows, err := state.recentOutbox(10)
+		rows, err := state.recentOutbox(session, 10)
 		if err != nil {
 			return "", err
 		}
 		if len(rows) == 0 {
 			return "Outbox is empty.", nil
 		}
-		// Oldest-to-newest order in the rendered list.
 		for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 			rows[i], rows[j] = rows[j], rows[i]
 		}
 		lines := []string{"Recent outbox messages:"}
 		for _, row := range rows {
-			lines = append(lines, fmt.Sprintf("- #%d [%s] %s", row.ID, row.Channel, preview(row.Text, 80)))
+			lines = append(lines, fmt.Sprintf("- #%d [%s] %s", row.ID, row.Session, preview(row.Text, 80)))
 		}
 		return strings.Join(lines, "\n"), nil
 	case "/log":
-		items, err := readTaskLogSummaries(tc, 20, false)
+		items, err := readTaskLogSummaries(tc, 20, false, false)
 		if err != nil {
 			return "", err
 		}
@@ -313,7 +534,7 @@ func renderSlashResponse(state *state, tc *lmfrt.TaskContext, text string) (stri
 		}
 		return strings.Join(lines, "\n"), nil
 	case "/tasks":
-		items, err := readTaskLogSummaries(tc, 0, true)
+		items, err := readTaskLogSummaries(tc, 0, true, true)
 		if err != nil {
 			return "", err
 		}
@@ -330,12 +551,12 @@ func renderSlashResponse(state *state, tc *lmfrt.TaskContext, text string) (stri
 	}
 }
 
-func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool) ([]string, error) {
+func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool, includeHidden bool) ([]string, error) {
 	if tc == nil {
 		return nil, fmt.Errorf("task context is nil")
 	}
 
-	summaries, err := lmfrt.LogState(tc).Summaries(limit, onlyRunning)
+	summaries, err := lmfrt.LogState(tc).Summaries(limit, onlyRunning, includeHidden)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +575,22 @@ func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool) ([
 	return lines, nil
 }
 
+func gatewaySessionInput(input map[string]any) (string, error) {
+	session, err := lmflib.StringInput(input, "session", false)
+	if err != nil {
+		return "", err
+	}
+	session = normalizeSession(session)
+	if session == "" {
+		session = defaultGatewaySession
+	}
+	return session, nil
+}
+
+func normalizeSession(session string) string {
+	return strings.TrimSpace(session)
+}
+
 func preview(text string, max int) string {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
 	if len(text) <= max {
@@ -363,4 +600,97 @@ func preview(text string, max int) string {
 		return text[:max]
 	}
 	return text[:max-3] + "..."
+}
+
+func inboundRetryBackoff(attempt int) time.Duration {
+	switch {
+	case attempt <= 1:
+		return time.Second
+	case attempt == 2:
+		return 2 * time.Second
+	case attempt == 3:
+		return 5 * time.Second
+	case attempt == 4:
+		return 10 * time.Second
+	case attempt == 5:
+		return 20 * time.Second
+	default:
+		return 30 * time.Second
+	}
+}
+
+func isRetryableInboundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "overloaded") {
+		return true
+	}
+	if strings.Contains(text, "rate limit") {
+		return true
+	}
+	if strings.Contains(text, "timeout") {
+		return true
+	}
+	if strings.Contains(text, "temporar") {
+		return true
+	}
+	if strings.Contains(text, "connection reset") {
+		return true
+	}
+	if strings.Contains(text, "connection refused") {
+		return true
+	}
+	if strings.Contains(text, "502") || strings.Contains(text, "503") || strings.Contains(text, "504") {
+		return true
+	}
+	return false
+}
+
+func inboundPumpInputFromRecvInput(input map[string]any) (map[string]any, error) {
+	out := map[string]any{}
+	if input == nil {
+		return out, nil
+	}
+	if cwd, err := lmflib.StringInput(input, "cwd", false); err != nil {
+		return nil, err
+	} else if strings.TrimSpace(cwd) != "" {
+		out["cwd"] = strings.TrimSpace(cwd)
+	}
+	if model, err := lmflib.StringInput(input, "model", false); err != nil {
+		return nil, err
+	} else if strings.TrimSpace(model) != "" {
+		out["model"] = strings.TrimSpace(model)
+	}
+	if maxTurns, err := lmflib.IntInput(input, "max_turns", false); err != nil {
+		return nil, err
+	} else if maxTurns > 0 {
+		out["max_turns"] = maxTurns
+	}
+	if timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false); err != nil {
+		return nil, err
+	} else if timeoutSec > 0 {
+		out["timeout_sec"] = timeoutSec
+	}
+	if temperature, err := lmflib.FloatInput(input, "temperature", false); err != nil {
+		return nil, err
+	} else if temperature != 0 {
+		out["temperature"] = temperature
+	}
+	return out, nil
+}
+
+func cloneMapAnyLocal(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

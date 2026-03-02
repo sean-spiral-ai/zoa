@@ -15,9 +15,9 @@ import (
 
 func TestProgrammaticGuard(t *testing.T) {
 	guard := &lmfrt.Function{
-		ID:        "test.local.programmatic_guard",
-		WhenToUse: "test only",
-		Schema:    map[string]any{"type": "object"},
+		ID:          "test.local.programmatic_guard",
+		WhenToUse:   "test only",
+		InputSchema: map[string]any{"type": "object"},
 		Exec: func(_ *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 			raw, ok := input["value"]
 			if !ok {
@@ -51,7 +51,7 @@ func TestProgrammaticGuard(t *testing.T) {
 			t.Fatalf("create task manager: %v", err)
 		}
 		defer func() { _ = manager.Close() }()
-		_, err = manager.Run(guard.ID, map[string]any{"value": 0})
+		_, err = runTaskAndWait(manager, guard.ID, map[string]any{"value": 0})
 		if err == nil {
 			t.Fatalf("expected error for non-positive value")
 		}
@@ -67,7 +67,7 @@ func TestProgrammaticGuard(t *testing.T) {
 			t.Fatalf("create task manager: %v", err)
 		}
 		defer func() { _ = manager.Close() }()
-		res, err := manager.Run(guard.ID, map[string]any{"value": 5})
+		res, err := runTaskAndWait(manager, guard.ID, map[string]any{"value": 5})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -211,4 +211,25 @@ func newTaskContext(t *testing.T, model string) *lmfrt.TaskContext {
 
 func asConditionErr(err error, target **lmfrt.NLConditionError) bool {
 	return errors.As(err, target)
+}
+
+func runTaskAndWait(manager *lmfrt.TaskManager, functionID string, input map[string]any) (lmfrt.TaskSnapshot, error) {
+	taskID, err := manager.Spawn(functionID, input, lmfrt.SpawnOptions{})
+	if err != nil {
+		return lmfrt.TaskSnapshot{}, err
+	}
+	snapshot, _, err := manager.Wait(taskID, 0)
+	if err != nil {
+		return lmfrt.TaskSnapshot{}, err
+	}
+	if snapshot.Status == lmfrt.TaskStatusFailed {
+		if strings.TrimSpace(snapshot.Error) == "" {
+			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+		}
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+	}
+	if snapshot.Status != lmfrt.TaskStatusDone {
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
+	}
+	return snapshot, nil
 }

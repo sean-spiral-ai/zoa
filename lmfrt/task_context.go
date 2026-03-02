@@ -22,16 +22,22 @@ type TaskContextOptions struct {
 	Temperature float64
 	SQLitePath  string
 
-	sqlDB sqlExecutor
+	sqlDB        sqlExecutor
+	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools     func() ([]baselineagent.Tool, error)
 }
 
 type TaskContext struct {
-	ctx        context.Context
-	apiKey     string
-	baseConfig baselineagent.ConversationConfig
-	mainConv   baselineagent.Conversation
-	sqlDB      sqlExecutor
-	ownsSQL    bool
+	ctx          context.Context
+	apiKey       string
+	baseConfig   baselineagent.ConversationConfig
+	mainConv     baselineagent.Conversation
+	sqlDB        sqlExecutor
+	ownsSQL      bool
+	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools     func() ([]baselineagent.Tool, error)
 }
 
 type SqlExecResult struct {
@@ -97,12 +103,15 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	}
 
 	return &TaskContext{
-		ctx:        ctx,
-		apiKey:     apiKey,
-		baseConfig: baseConfig,
-		mainConv:   nil,
-		sqlDB:      sqlDB,
-		ownsSQL:    ownsSQL,
+		ctx:          ctx,
+		apiKey:       apiKey,
+		baseConfig:   baseConfig,
+		mainConv:     nil,
+		sqlDB:        sqlDB,
+		ownsSQL:      ownsSQL,
+		registerPump: opts.registerPump,
+		spawnTask:    opts.spawnTask,
+		lmfTools:     opts.lmfTools,
 	}, nil
 }
 
@@ -194,6 +203,51 @@ func (t *TaskContext) SqlTx(fn func(*sql.Tx) error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (t *TaskContext) RegisterPump(pumpID, functionID string, input map[string]any, interval time.Duration) error {
+	if t == nil {
+		return fmt.Errorf("task context is nil")
+	}
+	if t.registerPump == nil {
+		return fmt.Errorf("pump registration is unavailable for this task context")
+	}
+	pumpID = strings.TrimSpace(pumpID)
+	if pumpID == "" {
+		return fmt.Errorf("pump_id cannot be empty")
+	}
+	functionID = strings.TrimSpace(functionID)
+	if functionID == "" {
+		return fmt.Errorf("function_id cannot be empty")
+	}
+	if interval <= 0 {
+		return fmt.Errorf("interval must be > 0")
+	}
+	return t.registerPump(pumpID, functionID, cloneMapAny(input), interval)
+}
+
+func (t *TaskContext) Spawn(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
+	if t == nil {
+		return "", fmt.Errorf("task context is nil")
+	}
+	if t.spawnTask == nil {
+		return "", fmt.Errorf("spawn is unavailable for this task context")
+	}
+	functionID = strings.TrimSpace(functionID)
+	if functionID == "" {
+		return "", fmt.Errorf("function_id cannot be empty")
+	}
+	return t.spawnTask(functionID, cloneMapAny(input), opts)
+}
+
+func (t *TaskContext) NewLmFunctionTools() ([]baselineagent.Tool, error) {
+	if t == nil {
+		return nil, fmt.Errorf("task context is nil")
+	}
+	if t.lmfTools == nil {
+		return nil, fmt.Errorf("lmfunction tools are unavailable for this task context")
+	}
+	return t.lmfTools()
 }
 
 func (t *TaskContext) requireSQL() (sqlExecutor, error) {
@@ -306,7 +360,18 @@ func (t *TaskContext) ensureMainConversation() error {
 	if err != nil {
 		return err
 	}
-	conv, err := baselineagent.NewConversation(apiKey, t.baseConfig)
+	cfg := t.baseConfig
+	if t.lmfTools != nil {
+		lmfTools, err := t.lmfTools()
+		if err != nil {
+			return fmt.Errorf("initialize lmfunction tools: %w", err)
+		}
+		toolset := make([]baselineagent.Tool, 0, len(cfg.Tools)+len(lmfTools))
+		toolset = append(toolset, cfg.Tools...)
+		toolset = append(toolset, lmfTools...)
+		cfg.Tools = toolset
+	}
+	conv, err := baselineagent.NewConversation(apiKey, cfg)
 	if err != nil {
 		return err
 	}

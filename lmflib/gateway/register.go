@@ -16,6 +16,9 @@ func RegisterFunctions(registry *lmfrt.Registry) error {
 	if err := registry.Register(recvFunction()); err != nil {
 		return err
 	}
+	if err := registry.Register(pumpFunction()); err != nil {
+		return err
+	}
 	if err := registry.Register(outboxSinceFunction()); err != nil {
 		return err
 	}

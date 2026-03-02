@@ -11,7 +11,7 @@ import (
 	baselineagent "zoa/baselineagent"
 )
 
-func NewLMFunctionTools(registry *Registry, manager *TaskManager) ([]baselineagent.Tool, error) {
+func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]baselineagent.Tool, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("registry is nil")
 	}
@@ -60,9 +60,10 @@ func (t *searchLMFunctionsTool) Execute(_ context.Context, args map[string]any) 
 	}
 
 	type match struct {
-		ID        string         `json:"id"`
-		WhenToUse string         `json:"when_to_use"`
-		Schema    map[string]any `json:"schema,omitempty"`
+		ID           string         `json:"id"`
+		WhenToUse    string         `json:"when_to_use"`
+		InputSchema  map[string]any `json:"input_schema,omitempty"`
+		OutputSchema map[string]any `json:"output_schema,omitempty"`
 	}
 
 	matches := []match{}
@@ -73,7 +74,12 @@ func (t *searchLMFunctionsTool) Execute(_ context.Context, args map[string]any) 
 				continue
 			}
 		}
-		matches = append(matches, match{ID: fn.ID, WhenToUse: fn.WhenToUse, Schema: fn.Schema})
+		matches = append(matches, match{
+			ID:           fn.ID,
+			WhenToUse:    fn.WhenToUse,
+			InputSchema:  fn.InputSchema,
+			OutputSchema: fn.OutputSchema,
+		})
 	}
 
 	sort.Slice(matches, func(i, j int) bool { return matches[i].ID < matches[j].ID })
@@ -126,7 +132,7 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 		input = cloneMapAny(parsed)
 	}
 
-	taskID, err := t.manager.Spawn(functionID, input)
+	taskID, err := t.manager.Spawn(functionID, input, SpawnOptions{})
 	if err != nil {
 		return "", err
 	}

@@ -31,13 +31,20 @@ func intrinsicModifyCodebase() *lmfrt.Function {
 	return &lmfrt.Function{
 		ID:        "intrinsic.modify_codebase",
 		WhenToUse: "Use when you need autonomous code edits in a workspace with verification (build/test/lint) and a human-readable change summary.",
-		Schema: map[string]any{
+		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"cwd":         map[string]any{"type": "string", "description": "Current working directory for the task"},
 				"instruction": map[string]any{"type": "string", "description": "The coding task to perform"},
 			},
 			"required": []string{"cwd", "instruction"},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"final_response": map[string]any{"type": "string"},
+			},
+			"required": []string{"final_response"},
 		},
 		Exec: runIntrinsicModifyCodebase,
 	}
