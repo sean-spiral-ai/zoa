@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	lmf "zoa/lmf/runtime"
+	gatewayservice "zoa/gateway"
+	lmfrt "zoa/lmfrt"
 )
 
-func RegisterFunctions(registry *lmf.Registry, service *Service) error {
+func RegisterFunctions(registry *lmfrt.Registry, service *gatewayservice.Service) error {
 	if registry == nil {
 		return fmt.Errorf("registry is nil")
 	}
@@ -20,8 +21,8 @@ func RegisterFunctions(registry *lmf.Registry, service *Service) error {
 	return nil
 }
 
-func RecvFunction(service *Service) *lmf.Function {
-	return &lmf.Function{
+func RecvFunction(service *gatewayservice.Service) *lmfrt.Function {
+	return &lmfrt.Function{
 		ID:        "gateway.recv",
 		WhenToUse: "Use at channel ingress to hand off any incoming user message into the persistent session queue (including slash command handling).",
 		Schema: map[string]any{
@@ -32,7 +33,7 @@ func RecvFunction(service *Service) *lmf.Function {
 			},
 			"required": []string{"message"},
 		},
-		Exec: func(_ *lmf.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(_ *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 			channel, err := getString(input, "channel", false)
 			if err != nil {
 				return nil, err

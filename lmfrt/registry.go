@@ -1,4 +1,4 @@
-package lmf
+package lmfrt
 
 import (
 	"fmt"

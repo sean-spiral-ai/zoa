@@ -1,10 +1,10 @@
-package functions
+package intrinsic
 
 import (
 	"fmt"
 	"strings"
 
-	lmf "zoa/lmf/runtime"
+	lmfrt "zoa/lmfrt"
 )
 
 const intrinsicModifyCodebasePrompt = `You are a pragmatic coding agent working inside a real codebase.
@@ -26,8 +26,8 @@ Final response:
 - Summarize what changed and validation status.
 `
 
-func IntrinsicModifyCodebase() *lmf.Function {
-	return &lmf.Function{
+func IntrinsicModifyCodebase() *lmfrt.Function {
+	return &lmfrt.Function{
 		ID:        "intrinsic.modify_codebase",
 		WhenToUse: "Use when you need autonomous code edits in a workspace with verification (build/test/lint) and a human-readable change summary.",
 		Schema: map[string]any{
@@ -42,7 +42,7 @@ func IntrinsicModifyCodebase() *lmf.Function {
 	}
 }
 
-func runIntrinsicModifyCodebase(tc *lmf.TaskContext, input map[string]any) (map[string]any, error) {
+func runIntrinsicModifyCodebase(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
 	cwd, err := stringInput(input, "cwd", true)
 	if err != nil {
 		return nil, err

@@ -3,8 +3,10 @@
 This repository now has three primary parts:
 
 - `baselineagent/`: baseline coding agent (Gemini + Anthropic function-calling loop + core coding tools)
-- `lmf/`: simple LM Function runtime and function registry
+- `lmfrt/`: LM Function runtime
+- `lmflib/`: LM Function library (`intrinsic.*` and `gateway.*`)
 - `gateway/`: persistent chat-session ingress/egress layer with non-blocking TUI
+- `tui/`: terminal UI entrypoints
 
 ## Baseline agent
 
@@ -19,7 +21,7 @@ The baseline agent is exposed as code:
 Run the persistent chat gateway:
 
 ```bash
-go run ./gateway/cmd/gateway-tui \
+go run ./tui/cmd \
   --cwd /absolute/workspace/path \
   --session-dir .gateway/sessions/default
 ```
@@ -50,7 +52,7 @@ go test ./...
 - `intrinsic.modify_codebase` and LLM-backed tests require model credentials.
 - There is no pre/post condition framework now; programmatic checks are regular Go errors in function bodies.
 - `ctx.NLCondition(...)` evaluates NL checks in an isolated fork of the task's baselineagent conversation.
-- `ctx.NLExec(...)` appends to one shared task conversation. Use `lmf.NLExecTyped[T](ctx, ...)` for typed JSON returns.
+- `ctx.NLExec(...)` appends to one shared task conversation. Use `lmfrt.NLExecTyped[T](ctx, ...)` for typed JSON returns.
 - Baseline agent default system prompt is intentionally short/generic; `intrinsic.modify_codebase` provides the full coding-focused system prompt.
 - `NLExecTyped` requests JSON-only responses. Gemini uses `responseMimeType=application/json` + `responseSchema`; Claude uses native `output_config.format.type=json_schema`.
 - LMF now includes a task runtime (`TaskManager`) and model-callable tools:

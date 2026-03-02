@@ -1,4 +1,4 @@
-package lmf_test
+package lmfrt_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
-	lmf "zoa/lmf/runtime"
+	lmf "zoa/lmfrt"
 )
 
 func TestProgrammaticGuard(t *testing.T) {

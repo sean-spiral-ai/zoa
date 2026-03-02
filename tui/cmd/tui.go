@@ -12,8 +12,9 @@ import (
 
 	baselineagent "zoa/baselineagent"
 	"zoa/gateway"
-	"zoa/lmf/functions"
-	lmf "zoa/lmf/runtime"
+	gatewaylmf "zoa/lmflib/gateway"
+	"zoa/lmflib/intrinsic"
+	lmfrt "zoa/lmfrt"
 )
 
 func main() {
@@ -63,12 +64,12 @@ func main() {
 		)
 	}
 
-	registry := functions.NewRegistry()
-	taskManager := lmf.NewTaskManager(registry, lmf.TaskManagerOptions{
+	registry := intrinsic.NewRegistry()
+	taskManager := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
 		TaskLogDir: filepath.Join(sessionDir, "tasks"),
 	})
 
-	lmfTools, err := lmf.NewLMFunctionTools(registry, taskManager)
+	lmfTools, err := lmfrt.NewLMFunctionTools(registry, taskManager)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing LMFunction tools: %v\n", err)
 		os.Exit(1)
@@ -98,7 +99,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := gateway.RegisterFunctions(registry, service); err != nil {
+	if err := gatewaylmf.RegisterFunctions(registry, service); err != nil {
 		fmt.Fprintf(os.Stderr, "error registering gateway functions: %v\n", err)
 		os.Exit(1)
 	}
