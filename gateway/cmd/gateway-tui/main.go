@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	defaultCWD, _ := os.Getwd()
+	defaultCWD := "/"
 
 	var (
 		cwd         string
