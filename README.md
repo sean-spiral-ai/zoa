@@ -1,11 +1,10 @@
 # codexAgentBase
 
-This repository now has three primary parts:
+This repository now has primary parts:
 
 - `baselineagent/`: baseline coding agent (Gemini + Anthropic function-calling loop + core coding tools)
 - `lmfrt/`: LM Function runtime
 - `lmflib/`: LM Function library (`intrinsic.*` and `gateway.*`)
-- `gateway/`: persistent chat-session ingress/egress layer with non-blocking TUI
 - `tui/`: terminal UI entrypoints
 
 ## Baseline agent
@@ -27,9 +26,9 @@ go run ./tui/cmd \
 ```
 
 Behavior:
-- non-blocking input loop (each inbound message is queued via `gateway.recv`)
+- non-blocking input loop (each inbound message is handled via `gateway.recv`)
 - slash commands handled programmatically: `/status`, `/queue`, `/log`, `/tasks`, `/outbox`
-- on-disk persistence: `snapshot.json` + `tasks/task-*.json`
+- on-disk persistence: SQLite (`state.db`) including gateway state and `lmfrt__task_log`
 - session reload from disk on restart
 - provider is inferred from an exact-model whitelist:
   - `claude-sonnet-4-6`

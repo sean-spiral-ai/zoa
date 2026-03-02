@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	lmfrt "zoa/lmfrt"
 )
@@ -232,5 +233,81 @@ func TestTaskManagerInitReturnsError(t *testing.T) {
 
 	if err := manager.Init(); err == nil {
 		t.Fatalf("expected init error")
+	}
+}
+
+func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
+	registry := lmfrt.NewRegistry()
+	registry.MustRegister(&lmfrt.Function{
+		ID:        "test.log.simple",
+		WhenToUse: "test only",
+		Schema:    map[string]any{"type": "object"},
+		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	})
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+		SQLitePath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	taskID, err := manager.Spawn("test.log.simple", map[string]any{})
+	if err != nil {
+		t.Fatalf("spawn task: %v", err)
+	}
+	_, timedOut, err := manager.Wait(taskID, 5*time.Second)
+	if err != nil {
+		t.Fatalf("wait task: %v", err)
+	}
+	if timedOut {
+		t.Fatalf("task wait timed out")
+	}
+
+	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+		CWD:        t.TempDir(),
+		SQLitePath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("create task context: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	res, err := tc.SqlQuery(
+		`SELECT task_id FROM lmfrt__task_log WHERE task_id = ?`,
+		taskID,
+	)
+	if err != nil {
+		t.Fatalf("query task log row: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(res.Rows))
+	}
+	summaries, err := lmfrt.LogState(tc).Summaries(10, false)
+	if err != nil {
+		t.Fatalf("read log summaries: %v", err)
+	}
+	if len(summaries) == 0 {
+		t.Fatalf("expected at least one summary row")
+	}
+	var found bool
+	for _, item := range summaries {
+		if item.TaskID != taskID {
+			continue
+		}
+		found = true
+		if item.FunctionID != "test.log.simple" {
+			t.Fatalf("unexpected function_id: %#v", item.FunctionID)
+		}
+		if item.Status != lmfrt.TaskStatusDone {
+			t.Fatalf("unexpected status: %#v", item.Status)
+		}
+	}
+	if !found {
+		t.Fatalf("task summary not found for task_id %s", taskID)
 	}
 }

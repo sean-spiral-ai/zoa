@@ -2,11 +2,9 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -42,14 +40,13 @@ func recvFunction() *lmfrt.Function {
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"channel":      map[string]any{"type": "string", "description": "Source channel identifier (defaults to tui)"},
-				"message":      map[string]any{"type": "string", "description": "Raw user message text"},
-				"task_log_dir": map[string]any{"type": "string", "description": "Task log directory for slash command summaries"},
-				"cwd":          map[string]any{"type": "string"},
-				"model":        map[string]any{"type": "string"},
-				"max_turns":    map[string]any{"type": "integer"},
-				"timeout_sec":  map[string]any{"type": "integer"},
-				"temperature":  map[string]any{"type": "number"},
+				"channel":     map[string]any{"type": "string", "description": "Source channel identifier (defaults to tui)"},
+				"message":     map[string]any{"type": "string", "description": "Raw user message text"},
+				"cwd":         map[string]any{"type": "string"},
+				"model":       map[string]any{"type": "string"},
+				"max_turns":   map[string]any{"type": "integer"},
+				"timeout_sec": map[string]any{"type": "integer"},
+				"temperature": map[string]any{"type": "number"},
 			},
 			"required": []string{"message"},
 		},
@@ -74,13 +71,8 @@ func recvFunction() *lmfrt.Function {
 				return nil, err
 			}
 
-			taskLogDir, err := lmflib.StringInput(input, "task_log_dir", false)
-			if err != nil {
-				return nil, err
-			}
-
 			if strings.HasPrefix(strings.TrimSpace(message), "/") {
-				reply, err := renderSlashResponse(state, taskLogDir, message)
+				reply, err := renderSlashResponse(state, tc, message)
 				if err != nil {
 					return nil, err
 				}
@@ -273,7 +265,7 @@ func processChatMessage(state *state, input map[string]any, message string) (str
 	return text, nil
 }
 
-func renderSlashResponse(state *state, taskLogDir string, text string) (string, error) {
+func renderSlashResponse(state *state, tc *lmfrt.TaskContext, text string) (string, error) {
 	command := strings.Fields(strings.TrimSpace(text))
 	if len(command) == 0 {
 		return "", fmt.Errorf("invalid command")
@@ -308,7 +300,7 @@ func renderSlashResponse(state *state, taskLogDir string, text string) (string, 
 		}
 		return strings.Join(lines, "\n"), nil
 	case "/log":
-		items, err := readTaskLogSummaries(taskLogDir, 20, false)
+		items, err := readTaskLogSummaries(tc, 20, false)
 		if err != nil {
 			return "", err
 		}
@@ -321,7 +313,7 @@ func renderSlashResponse(state *state, taskLogDir string, text string) (string, 
 		}
 		return strings.Join(lines, "\n"), nil
 	case "/tasks":
-		items, err := readTaskLogSummaries(taskLogDir, 0, true)
+		items, err := readTaskLogSummaries(tc, 0, true)
 		if err != nil {
 			return "", err
 		}
@@ -338,62 +330,24 @@ func renderSlashResponse(state *state, taskLogDir string, text string) (string, 
 	}
 }
 
-func readTaskLogSummaries(taskDir string, limit int, onlyRunning bool) ([]string, error) {
-	taskDir = strings.TrimSpace(taskDir)
-	if taskDir == "" {
-		return []string{}, nil
-	}
-	entries, err := os.ReadDir(taskDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil
-		}
-		return nil, fmt.Errorf("read task log dir: %w", err)
-	}
-	files := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasPrefix(name, "task-") && strings.HasSuffix(name, ".json") {
-			files = append(files, name)
-		}
-	}
-	sort.Strings(files)
-	if limit > 0 && len(files) > limit {
-		files = files[len(files)-limit:]
-	}
-	for i, j := 0, len(files)-1; i < j; i, j = i+1, j-1 {
-		files[i], files[j] = files[j], files[i]
+func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool) ([]string, error) {
+	if tc == nil {
+		return nil, fmt.Errorf("task context is nil")
 	}
 
-	lines := make([]string, 0, len(files))
-	for _, name := range files {
-		path := filepath.Join(taskDir, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
+	summaries, err := lmfrt.LogState(tc).Summaries(limit, onlyRunning)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]string, 0, len(summaries))
+	for _, item := range summaries {
+		line := fmt.Sprintf("%s %s [%s]", item.TaskID, item.FunctionID, item.Status)
+		if strings.TrimSpace(item.Error) != "" {
+			line += " error=" + preview(item.Error, 80)
 		}
-		var parsed struct {
-			TaskID     string `json:"task_id"`
-			FunctionID string `json:"function_id"`
-			Status     string `json:"status"`
-			Error      string `json:"error,omitempty"`
-			UpdatedAt  string `json:"updated_at,omitempty"`
-		}
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			continue
-		}
-		if onlyRunning && parsed.Status != "running" {
-			continue
-		}
-		line := fmt.Sprintf("%s %s [%s]", parsed.TaskID, parsed.FunctionID, parsed.Status)
-		if parsed.Error != "" {
-			line += " error=" + preview(parsed.Error, 80)
-		}
-		if parsed.UpdatedAt != "" {
-			line += " updated_at=" + parsed.UpdatedAt
+		if strings.TrimSpace(item.UpdatedAt) != "" {
+			line += " updated_at=" + item.UpdatedAt
 		}
 		lines = append(lines, line)
 	}

@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -41,8 +39,6 @@ type TaskLogRecord struct {
 }
 
 type TaskManagerOptions struct {
-	// TaskLogDir writes one JSON file per task when set.
-	TaskLogDir string
 	// SQLitePath configures the runtime SQLite database path.
 	// When set, TaskManager opens and owns this connection.
 	SQLitePath string
@@ -60,6 +56,7 @@ type TaskManager struct {
 	baseCtx  context.Context
 	opts     TaskManagerOptions
 	sqlDB    *sql.DB
+	taskLog  *TaskLogState
 
 	mu     sync.RWMutex
 	nextID uint64
@@ -89,6 +86,19 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 	}
 	manager.sqlDB = db
 	manager.opts.SQLitePath = resolvedPath
+	taskLogCtx, err := NewTaskContext(ctx, TaskContextOptions{
+		SQLitePath: resolvedPath,
+		sqlDB:      db,
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	manager.taskLog = LogState(taskLogCtx)
+	if err := manager.taskLog.Init(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return manager, nil
 }
 
@@ -284,30 +294,14 @@ func (m *TaskManager) getRecord(taskID string) (*taskRecord, error) {
 }
 
 func (m *TaskManager) persistTask(taskID string) error {
-	taskDir := strings.TrimSpace(m.opts.TaskLogDir)
-	if taskDir == "" {
-		return nil
-	}
 	record, err := m.taskLogRecord(taskID)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(taskDir, 0o755); err != nil {
-		return fmt.Errorf("create task log dir: %w", err)
+	if m.taskLog == nil {
+		return fmt.Errorf("task log store is not initialized")
 	}
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode task log: %w", err)
-	}
-	target := filepath.Join(taskDir, taskFileName(record.TaskID))
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write task log temp: %w", err)
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		return fmt.Errorf("replace task log: %w", err)
-	}
-	return nil
+	return m.taskLog.upsert(record)
 }
 
 func (m *TaskManager) taskLogRecord(taskID string) (TaskLogRecord, error) {
@@ -325,15 +319,6 @@ func (m *TaskManager) taskLogRecord(taskID string) (TaskLogRecord, error) {
 	}
 	out.Output = cloneMapAny(out.Output)
 	return out, nil
-}
-
-func taskFileName(taskID string) string {
-	trimmed := strings.TrimSpace(taskID)
-	trimmed = strings.TrimPrefix(trimmed, "task-")
-	if trimmed == "" {
-		trimmed = "unknown"
-	}
-	return fmt.Sprintf("task-%s.json", trimmed)
 }
 
 func cloneMapAny(in map[string]any) map[string]any {

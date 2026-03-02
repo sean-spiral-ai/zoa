@@ -30,7 +30,7 @@ func main() {
 	)
 
 	flag.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
-	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway sqlite/task-log persistence")
+	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway sqlite persistence")
 	flag.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	flag.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	flag.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
@@ -68,7 +68,6 @@ func main() {
 		os.Exit(1)
 	}
 	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
-		TaskLogDir: filepath.Join(sessionDir, "tasks"),
 		SQLitePath: filepath.Join(sessionDir, "state.db"),
 	})
 	if err != nil {
@@ -113,14 +112,13 @@ func main() {
 		}
 
 		taskID, err := taskManager.Spawn("gateway.recv", map[string]any{
-			"channel":      "tui",
-			"message":      line,
-			"task_log_dir": filepath.Join(sessionDir, "tasks"),
-			"cwd":          cwd,
-			"model":        model,
-			"max_turns":    maxTurns,
-			"timeout_sec":  timeoutSec,
-			"temperature":  temperature,
+			"channel":     "tui",
+			"message":     line,
+			"cwd":         cwd,
+			"model":       model,
+			"max_turns":   maxTurns,
+			"timeout_sec": timeoutSec,
+			"temperature": temperature,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "recv spawn error: %v\n", err)
