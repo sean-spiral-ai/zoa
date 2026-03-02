@@ -5,7 +5,7 @@ This repository now has primary parts:
 - `baselineagent/`: baseline coding agent (Gemini + Anthropic function-calling loop + core coding tools)
 - `lmfrt/`: LM Function runtime
 - `lmflib/`: LM Function library (`intrinsic.*` and `gateway.*`)
-- `tui/`: terminal UI entrypoints
+- `cmd/zoa/`: CLI entrypoint (`tui`, `inspect`)
 
 ## Baseline agent
 
@@ -20,9 +20,21 @@ The baseline agent is exposed as code:
 Run the persistent chat gateway:
 
 ```bash
-go run ./tui/cmd \
+go run ./cmd/zoa -- tui \
   --cwd /absolute/workspace/path \
   --session-dir .gateway/sessions/default
+```
+
+Inspect a gateway session database:
+
+```bash
+go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default
+```
+
+Run an explicit SQL query:
+
+```bash
+go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
 ```
 
 Behavior:

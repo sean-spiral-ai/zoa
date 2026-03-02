@@ -16,8 +16,11 @@ import (
 	lmfrt "zoa/lmfrt"
 )
 
-func main() {
+func runTUI(args []string) int {
 	defaultCWD := "/"
+
+	tuiFlags := flag.NewFlagSet("tui", flag.ContinueOnError)
+	tuiFlags.SetOutput(os.Stderr)
 
 	var (
 		cwd         string
@@ -29,14 +32,21 @@ func main() {
 		pollMs      int
 	)
 
-	flag.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
-	flag.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway sqlite persistence")
-	flag.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
-	flag.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
-	flag.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
-	flag.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
-	flag.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
-	flag.Parse()
+	tuiFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
+	tuiFlags.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Directory for gateway sqlite persistence")
+	tuiFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
+	tuiFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
+	tuiFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
+	tuiFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
+	tuiFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
+
+	if err := tuiFlags.Parse(args); err != nil {
+		return 2
+	}
+	if tuiFlags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected positional args: %s\n", strings.Join(tuiFlags.Args(), " "))
+		return 2
+	}
 
 	if strings.TrimSpace(model) == "" {
 		model = baselineagent.DefaultModel
@@ -49,7 +59,7 @@ func main() {
 			model,
 			strings.Join(baselineagent.SupportedModelNames(), ", "),
 		)
-		os.Exit(1)
+		return 1
 	}
 
 	_, ok := baselineagent.ResolveCredential("", model)
@@ -65,14 +75,14 @@ func main() {
 	registry := lmfrt.NewRegistry()
 	if err := intrinsic.RegisterFunctions(registry); err != nil {
 		fmt.Fprintf(os.Stderr, "error registering intrinsic functions: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
 		SQLitePath: filepath.Join(sessionDir, "state.db"),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing task manager: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		if err := taskManager.Close(); err != nil {
@@ -82,11 +92,11 @@ func main() {
 
 	if err := gatewaylmf.RegisterFunctions(registry); err != nil {
 		fmt.Fprintf(os.Stderr, "error registering gateway functions: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := taskManager.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "error running init functions: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	fmt.Println("Gateway TUI started. Type messages to enqueue.")
@@ -129,7 +139,9 @@ func main() {
 
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "input error: %v\n", err)
+		return 1
 	}
+	return 0
 }
 
 func pollOutbox(ctx context.Context, taskManager *lmfrt.TaskManager, interval time.Duration) {
