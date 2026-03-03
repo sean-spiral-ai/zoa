@@ -15,25 +15,27 @@ const serviceName = "zoa"
 
 // InstallConfig holds the parameters baked into the launcher script.
 type InstallConfig struct {
-	SourceDir   string  // Go source tree (default: os.Getwd())
-	CWD         string  // --cwd for zoa slack
-	SessionDir  string  // --session-dir
-	Model       string  // --model
-	MaxTurns    int     // --max-turns
-	Temperature float64 // --temperature
-	TimeoutSec  int     // --timeout
-	PollMs      int     // --poll-ms
-	LogLevel    string  // --log-level
+	SourceDir         string  // Go source tree (default: os.Getwd())
+	CWD               string  // --cwd for zoa slack
+	SessionDir        string  // --session-dir
+	Model             string  // --model
+	MaxTurns          int     // --max-turns
+	Temperature       float64 // --temperature
+	TimeoutSec        int     // --timeout
+	PollMs            int     // --poll-ms
+	LogLevel          string  // --log-level
+	DebugLogComponent string  // --debug-log-component
 
 	// Defaults used to suppress flags that match.
-	DefaultModel       string
-	DefaultMaxTurns    int
-	DefaultTemperature float64
-	DefaultTimeoutSec  int
-	DefaultPollMs      int
-	DefaultLogLevel    string
-	DefaultCWD         string
-	DefaultSessionDir  string
+	DefaultModel             string
+	DefaultMaxTurns          int
+	DefaultTemperature       float64
+	DefaultTimeoutSec        int
+	DefaultPollMs            int
+	DefaultLogLevel          string
+	DefaultDebugLogComponent string
+	DefaultCWD               string
+	DefaultSessionDir        string
 }
 
 // Action represents a systemctl lifecycle verb.
@@ -283,6 +285,7 @@ func buildSlackFlags(cfg InstallConfig) string {
 	}
 
 	add("--log-level", cfg.LogLevel, cfg.DefaultLogLevel)
+	add("--debug-log-component", cfg.DebugLogComponent, cfg.DefaultDebugLogComponent)
 	add("--cwd", cfg.CWD, cfg.DefaultCWD)
 	add("--session-dir", cfg.SessionDir, cfg.DefaultSessionDir)
 	add("--model", cfg.Model, cfg.DefaultModel)

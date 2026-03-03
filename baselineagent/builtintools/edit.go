@@ -13,6 +13,8 @@ type EditTool struct {
 	paths *PathResolver
 }
 
+const maxEditFileBytes = 2 * 1024 * 1024
+
 func NewEditTool(paths *PathResolver) *EditTool {
 	return &EditTool{paths: paths}
 }
@@ -20,7 +22,7 @@ func NewEditTool(paths *PathResolver) *EditTool {
 func (t *EditTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "edit",
-		Description: "Replace exact oldText with newText in a file. oldText must match exactly and uniquely.",
+		Description: "Replace exact oldText with newText in a text file up to 2MB. oldText must match exactly and uniquely.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -51,9 +53,23 @@ func (t *EditTool) Execute(_ context.Context, args map[string]any) (string, erro
 		return "", err
 	}
 
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+	if info.Size() > maxEditFileBytes {
+		return "", fmt.Errorf("refusing to edit %s: file is %s (max %s)", path, formatSize(int(info.Size())), formatSize(maxEditFileBytes))
+	}
+
 	contentBytes, err := os.ReadFile(abs)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(contentBytes) > maxEditFileBytes {
+		return "", fmt.Errorf("refusing to edit %s: file is %s (max %s)", path, formatSize(len(contentBytes)), formatSize(maxEditFileBytes))
+	}
+	if isLikelyBinary(contentBytes) {
+		return "", fmt.Errorf("refusing to edit %s: file appears to be binary", path)
 	}
 	content := string(contentBytes)
 

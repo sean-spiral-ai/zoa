@@ -50,14 +50,15 @@ func daemonInstall(args []string) int {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		cwd         string
-		sessionDir  string
-		model       string
-		maxTurns    int
-		temperature float64
-		timeoutSec  int
-		pollMs      int
-		logLevel    string
+		cwd               string
+		sessionDir        string
+		model             string
+		maxTurns          int
+		temperature       float64
+		timeoutSec        int
+		pollMs            int
+		logLevel          string
+		debugLogComponent string
 	)
 
 	defaultCWD := "/"
@@ -66,6 +67,7 @@ func daemonInstall(args []string) int {
 	defaultLogLevel := "info"
 
 	fs.StringVar(&logLevel, "log-level", defaultLogLevel, "Log level (debug, info, warn, error)")
+	fs.StringVar(&debugLogComponent, "debug-log-component", "", "When set, only DEBUG logs with this component are emitted")
 	fs.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	fs.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	fs.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
@@ -83,23 +85,25 @@ func daemonInstall(args []string) int {
 	}
 
 	cfg := daemon.InstallConfig{
-		CWD:         cwd,
-		SessionDir:  sessionDir,
-		Model:       model,
-		MaxTurns:    maxTurns,
-		Temperature: temperature,
-		TimeoutSec:  timeoutSec,
-		PollMs:      pollMs,
-		LogLevel:    logLevel,
+		CWD:               cwd,
+		SessionDir:        sessionDir,
+		Model:             model,
+		MaxTurns:          maxTurns,
+		Temperature:       temperature,
+		TimeoutSec:        timeoutSec,
+		PollMs:            pollMs,
+		LogLevel:          logLevel,
+		DebugLogComponent: debugLogComponent,
 
-		DefaultModel:       baselineagent.DefaultModel,
-		DefaultMaxTurns:    baselineagent.DefaultMaxTurns,
-		DefaultTemperature: baselineagent.DefaultTemperature,
-		DefaultTimeoutSec:  defaultTimeout,
-		DefaultPollMs:      defaultPollMs,
-		DefaultLogLevel:    defaultLogLevel,
-		DefaultCWD:         defaultCWD,
-		DefaultSessionDir:  gatewayclient.DefaultSessionDir,
+		DefaultModel:             baselineagent.DefaultModel,
+		DefaultMaxTurns:          baselineagent.DefaultMaxTurns,
+		DefaultTemperature:       baselineagent.DefaultTemperature,
+		DefaultTimeoutSec:        defaultTimeout,
+		DefaultPollMs:            defaultPollMs,
+		DefaultLogLevel:          defaultLogLevel,
+		DefaultDebugLogComponent: "",
+		DefaultCWD:               defaultCWD,
+		DefaultSessionDir:        gatewayclient.DefaultSessionDir,
 	}
 
 	if err := daemon.Install(cfg); err != nil {
@@ -155,5 +159,5 @@ func printDaemonUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Install flags (same as 'zoa slack'):")
 	fmt.Fprintln(os.Stderr, "  --cwd, --model, --max-turns, --temperature,")
-	fmt.Fprintln(os.Stderr, "  --timeout, --poll-ms, --session-dir, --log-level")
+	fmt.Fprintln(os.Stderr, "  --timeout, --poll-ms, --session-dir, --log-level, --debug-log-component")
 }

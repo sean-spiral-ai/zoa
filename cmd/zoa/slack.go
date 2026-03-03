@@ -32,12 +32,14 @@ func runSlack(args []string) int {
 		timeoutSec  int
 		pollMs      int
 
-		appTokenFlag string
-		botTokenFlag string
-		logLevel     string
+		appTokenFlag      string
+		botTokenFlag      string
+		logLevel          string
+		debugLogComponent string
 	)
 
 	slackFlags.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	slackFlags.StringVar(&debugLogComponent, "debug-log-component", "", "When set, only DEBUG logs with this component are emitted")
 	slackFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	slackFlags.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	slackFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
@@ -61,9 +63,16 @@ func runSlack(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: invalid log level %q (use debug, info, warn, error)\n", logLevel)
 		return 2
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	handler := slog.Handler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slogLevel,
-	})))
+	}))
+	if strings.TrimSpace(debugLogComponent) != "" {
+		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})
+		handler = newDebugComponentFilterHandler(handler, slogLevel, strings.TrimSpace(debugLogComponent))
+	}
+	slog.SetDefault(slog.New(handler))
 
 	if err := keys.LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: loading .env: %v\n", err)
@@ -135,6 +144,7 @@ func runSlack(args []string) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
 	if err := service.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "slack runtime error: %v\n", err)
 		return 1

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	builtintools "zoa/baselineagent/builtintools"
@@ -127,6 +128,15 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 
 		toolResults := make([]llm.ToolResult, 0, len(resp.ToolCalls))
 		for _, call := range resp.ToolCalls {
+			slog.Debug(
+				"tool call",
+				"component", "baselineagent_toolcall",
+				"phase", "start",
+				"turn", turn,
+				"call_id", call.ID,
+				"tool", call.Name,
+				"args", call.Args,
+			)
 			t, ok := s.registry.Get(call.Name)
 			if !ok {
 				result := llm.ToolResult{
@@ -135,6 +145,18 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 					Output:  fmt.Sprintf("unknown tool: %s", call.Name),
 					IsError: true,
 				}
+				slog.Debug(
+					"tool call",
+					"component", "baselineagent_toolcall",
+					"phase", "end",
+					"turn", turn,
+					"call_id", call.ID,
+					"tool", call.Name,
+					"error", true,
+					"error_type", "unknown_tool",
+					"output_len", len(result.Output),
+					"output_preview", previewText(result.Output, 300),
+				)
 				toolResults = append(toolResults, result)
 				s.logf("tool %s: unknown tool\n", call.Name)
 				continue
@@ -151,6 +173,17 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			if execErr != nil {
 				toolResult.Output = execErr.Error()
 			}
+			slog.Debug(
+				"tool call",
+				"component", "baselineagent_toolcall",
+				"phase", "end",
+				"turn", turn,
+				"call_id", call.ID,
+				"tool", call.Name,
+				"error", execErr != nil,
+				"output_len", len(toolResult.Output),
+				"output_preview", previewText(toolResult.Output, 300),
+			)
 			toolResults = append(toolResults, toolResult)
 			s.logf("tool %s result (error=%v):\n%s\n", call.Name, toolResult.IsError, toolResult.Output)
 		}
@@ -267,4 +300,15 @@ func cloneAny(v any) any {
 	default:
 		return v
 	}
+}
+
+func previewText(s string, maxLen int) string {
+	if maxLen <= 0 {
+		maxLen = 300
+	}
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "...(truncated)"
 }

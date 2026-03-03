@@ -2,13 +2,13 @@ package builtintools
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io/fs"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/bmatcuk/doublestar/v4"
 
 	"zoa/baselineagent/internal/llm"
 )
@@ -24,7 +24,7 @@ func NewFindTool(paths *PathResolver) *FindTool {
 func (t *FindTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "find",
-		Description: "Find files by glob pattern (supports **). Ignores .git and node_modules.",
+		Description: "Find files by glob pattern using fd (fallback: find). Supports **. Ignores .git and node_modules.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -37,7 +37,7 @@ func (t *FindTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *FindTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *FindTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	pattern, err := StringArg(args, "pattern", true)
 	if err != nil {
 		return "", err
@@ -61,48 +61,26 @@ func (t *FindTool) Execute(_ context.Context, args map[string]any) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	matches := make([]string, 0, min(limit, 200))
-	limitHit := false
-	err = filepath.WalkDir(abs, func(current string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		rel, err := filepath.Rel(abs, current)
-		if err != nil {
-			return nil
-		}
-		relSlash := filepath.ToSlash(rel)
-
-		if d.IsDir() {
-			if relSlash == ".git" || relSlash == "node_modules" || strings.HasPrefix(relSlash, ".git/") || strings.HasPrefix(relSlash, "node_modules/") {
-				return fs.SkipDir
-			}
-			return nil
-		}
-
-		ok, err := doublestar.PathMatch(pattern, relSlash)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			baseOk, _ := doublestar.PathMatch(pattern, filepath.Base(relSlash))
-			if !baseOk {
-				return nil
-			}
-		}
-
-		if len(matches) >= limit {
-			limitHit = true
-			return fs.SkipAll
-		}
-		matches = append(matches, relSlash)
-		return nil
+	rawOutput, cmdCaptureTruncated, err := runFindBackend(ctx, findRunOptions{
+		AbsPath: abs,
+		Pattern: pattern,
 	})
 	if err != nil {
+		if errors.Is(err, errNoFindMatches) {
+			return "No files found matching pattern", nil
+		}
 		return "", err
 	}
 
+	matches := normalizeFindOutput(rawOutput)
+	limitHit := len(matches) > limit
+	if limitHit {
+		matches = matches[:limit]
+	}
 	if len(matches) == 0 {
 		return "No files found matching pattern", nil
 	}
@@ -119,15 +97,132 @@ func (t *FindTool) Execute(_ context.Context, args map[string]any) (string, erro
 	if tr.Truncated {
 		notices = append(notices, fmt.Sprintf("output truncated by %s", tr.Reason))
 	}
+	if cmdCaptureTruncated {
+		notices = append(notices, "command output capture limit reached")
+	}
 	if len(notices) > 0 {
 		output += "\n\n[" + strings.Join(notices, ". ") + "]"
 	}
 	return output, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+type findRunOptions struct {
+	AbsPath string
+	Pattern string
+}
+
+var errNoFindMatches = errors.New("no files found")
+
+func runFindBackend(ctx context.Context, opts findRunOptions) (string, bool, error) {
+	backend, args, cmdDir, err := buildFindCommand(opts)
+	if err != nil {
+		return "", false, err
 	}
-	return b
+	cmd := exec.CommandContext(ctx, backend, args...)
+	cmd.Dir = cmdDir
+
+	stdout := newCappedBuffer(maxGrepCapturedBytes)
+	stderr := newCappedBuffer(maxGrepCapturedBytes / 2)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	runErr := cmd.Run()
+	output := strings.TrimSpace(stdout.String())
+	errOut := strings.TrimSpace(stderr.String())
+	captureTruncated := stdout.Truncated() || stderr.Truncated()
+
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 && output == "" && errOut == "" {
+			return "", captureTruncated, errNoFindMatches
+		}
+		detail := strings.TrimSpace(errOut)
+		if detail == "" {
+			detail = strings.TrimSpace(output)
+		}
+		if detail != "" {
+			return "", captureTruncated, fmt.Errorf("%s failed: %w\n%s", backend, runErr, detail)
+		}
+		return "", captureTruncated, fmt.Errorf("%s failed: %w", backend, runErr)
+	}
+
+	if output == "" {
+		return "", captureTruncated, errNoFindMatches
+	}
+	return output, captureTruncated, nil
+}
+
+func buildFindCommand(opts findRunOptions) (backend string, args []string, cmdDir string, err error) {
+	info, err := os.Stat(opts.AbsPath)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("stat path: %w", err)
+	}
+
+	cmdDir = opts.AbsPath
+	searchRoot := "."
+	if !info.IsDir() {
+		cmdDir = filepath.Dir(opts.AbsPath)
+		searchRoot = filepath.Base(opts.AbsPath)
+	}
+
+	if fdPath, fdErr := exec.LookPath("fd"); fdErr == nil {
+		return fdPath, buildFDArgs(opts.Pattern, searchRoot), cmdDir, nil
+	}
+	if fdPath, fdErr := exec.LookPath("fdfind"); fdErr == nil {
+		return fdPath, buildFDArgs(opts.Pattern, searchRoot), cmdDir, nil
+	}
+	if findPath, findErr := exec.LookPath("find"); findErr == nil {
+		return findPath, buildFindArgs(opts.Pattern, searchRoot), cmdDir, nil
+	}
+	return "", nil, "", fmt.Errorf("neither fd/fdfind nor find is available")
+}
+
+func buildFDArgs(pattern, searchRoot string) []string {
+	return []string{
+		"--glob",
+		"--type", "f",
+		"--color", "never",
+		"--hidden",
+		"--no-ignore",
+		"--exclude", ".git",
+		"--exclude", "node_modules",
+		pattern,
+		searchRoot,
+	}
+}
+
+func buildFindArgs(pattern, searchRoot string) []string {
+	pred := []string{"-name", pattern}
+	if strings.Contains(pattern, "/") {
+		pred = []string{"-path", "./" + pattern}
+	}
+	args := []string{
+		searchRoot,
+		"-type", "d", "(", "-name", ".git", "-o", "-name", "node_modules", ")", "-prune",
+		"-o", "-type", "f",
+	}
+	args = append(args, pred...)
+	args = append(args, "-print")
+	return args
+}
+
+func normalizeFindOutput(out string) []string {
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+	lines := strings.Split(out, "\n")
+	results := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = strings.TrimPrefix(line, "./")
+		line = filepath.ToSlash(line)
+		if line == "." {
+			continue
+		}
+		results = append(results, line)
+	}
+	return results
 }

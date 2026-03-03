@@ -1,18 +1,15 @@
 package builtintools
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
-	"sort"
+	"strconv"
 	"strings"
-
-	"github.com/bmatcuk/doublestar/v4"
 
 	"zoa/baselineagent/internal/llm"
 )
@@ -28,12 +25,12 @@ func NewGrepTool(paths *PathResolver) *GrepTool {
 func (t *GrepTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "grep",
-		Description: "Search file contents for a pattern. Supports regex or literal search with optional context lines.",
+		Description: "Search file contents using ripgrep (fallback: grep). Supports regex/literal patterns and optional context. Refuses searching '/'.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"pattern":    map[string]any{"type": "string", "description": "Regex or literal pattern"},
-				"path":       map[string]any{"type": "string", "description": "Directory or file path (default '.')"},
+				"path":       map[string]any{"type": "string", "description": "Directory or file path (default '.'). Root '/' is rejected."},
 				"glob":       map[string]any{"type": "string", "description": "Optional file glob filter"},
 				"ignoreCase": map[string]any{"type": "boolean"},
 				"literal":    map[string]any{"type": "boolean"},
@@ -45,7 +42,7 @@ func (t *GrepTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *GrepTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *GrepTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	pattern, err := StringArg(args, "pattern", true)
 	if err != nil {
 		return "", err
@@ -88,115 +85,38 @@ func (t *GrepTool) Execute(_ context.Context, args map[string]any) (string, erro
 	if err != nil {
 		return "", err
 	}
-
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", path, err)
+	if filepath.Clean(abs) == string(filepath.Separator) {
+		return "", fmt.Errorf("refusing to grep '/' (root). choose a narrower path")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	matcher, err := buildMatcher(pattern, literal, ignoreCase)
+	output, cmdCaptureTruncated, err := runGrepBackend(ctx, grepRunOptions{
+		AbsPath:      abs,
+		Pattern:      pattern,
+		Glob:         globPattern,
+		IgnoreCase:   ignoreCase,
+		Literal:      literal,
+		ContextLines: contextLines,
+		Limit:        limit,
+	})
 	if err != nil {
+		if errors.Is(err, errNoMatches) {
+			return "No matches found", nil
+		}
 		return "", err
 	}
 
-	results := make([]string, 0, min(limit, 200)*2)
-	matchCount := 0
-	limitHit := false
-	lineTruncated := false
-
-	searchFile := func(filePath string, rel string) error {
-		data, err := os.ReadFile(filePath)
-		if err != nil || isLikelyBinary(data) {
-			return nil
-		}
-		lines := splitLines(string(data))
-		for i, line := range lines {
-			if matcher(line) {
-				matchCount++
-				blockStart := max(1, i+1-contextLines)
-				blockEnd := min(len(lines), i+1+contextLines)
-				for ln := blockStart; ln <= blockEnd; ln++ {
-					text := lines[ln-1]
-					if len(text) > 500 {
-						text = text[:500] + "... [truncated]"
-						lineTruncated = true
-					}
-					if ln == i+1 {
-						results = append(results, fmt.Sprintf("%s:%d: %s", rel, ln, text))
-					} else {
-						results = append(results, fmt.Sprintf("%s-%d- %s", rel, ln, text))
-					}
-				}
-				if matchCount >= limit {
-					limitHit = true
-					return fs.SkipAll
-				}
-			}
-		}
-		return nil
-	}
-
-	if !info.IsDir() {
-		rel := filepath.Base(abs)
-		if err := searchFile(abs, rel); err != nil && err != fs.SkipAll {
-			return "", err
-		}
-	} else {
-		err = filepath.WalkDir(abs, func(current string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			rel, err := filepath.Rel(abs, current)
-			if err != nil {
-				return nil
-			}
-			relSlash := filepath.ToSlash(rel)
-			if d.IsDir() {
-				if relSlash == ".git" || relSlash == "node_modules" || strings.HasPrefix(relSlash, ".git/") || strings.HasPrefix(relSlash, "node_modules/") {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if globPattern != "" {
-				ok, err := doublestar.PathMatch(globPattern, relSlash)
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return nil
-				}
-			}
-			if err := searchFile(current, relSlash); err != nil {
-				return err
-			}
-			if limitHit {
-				return fs.SkipAll
-			}
-			return nil
-		})
-		if err != nil && err != fs.SkipAll {
-			return "", err
-		}
-	}
-
-	if len(results) == 0 {
-		return "No matches found", nil
-	}
-
-	sort.Strings(results)
-	output := strings.Join(results, "\n")
 	tr := TruncateHead(output, 1_000_000, DefaultMaxBytes)
 	output = tr.Content
 
-	notices := make([]string, 0, 3)
-	if limitHit {
-		notices = append(notices, fmt.Sprintf("%d match limit reached", limit))
-	}
+	notices := make([]string, 0, 2)
 	if tr.Truncated {
 		notices = append(notices, fmt.Sprintf("output truncated by %s", tr.Reason))
 	}
-	if lineTruncated {
-		notices = append(notices, "some lines truncated to 500 chars")
+	if cmdCaptureTruncated {
+		notices = append(notices, "command output capture limit reached")
 	}
 	if len(notices) > 0 {
 		output += "\n\n[" + strings.Join(notices, ". ") + "]"
@@ -204,44 +124,153 @@ func (t *GrepTool) Execute(_ context.Context, args map[string]any) (string, erro
 	return output, nil
 }
 
-func buildMatcher(pattern string, literal, ignoreCase bool) (func(string) bool, error) {
-	if literal {
-		needle := pattern
-		if ignoreCase {
-			needle = strings.ToLower(needle)
-			return func(line string) bool {
-				return strings.Contains(strings.ToLower(line), needle)
-			}, nil
-		}
-		return func(line string) bool { return strings.Contains(line, needle) }, nil
-	}
-	flags := ""
-	if ignoreCase {
-		flags = "(?i)"
-	}
-	re, err := regexp.Compile(flags + pattern)
+type grepRunOptions struct {
+	AbsPath      string
+	Pattern      string
+	Glob         string
+	IgnoreCase   bool
+	Literal      bool
+	ContextLines int
+	Limit        int
+}
+
+var errNoMatches = errors.New("no matches")
+
+const maxGrepCapturedBytes = 2 * 1024 * 1024
+
+func runGrepBackend(ctx context.Context, opts grepRunOptions) (string, bool, error) {
+	backend, args, err := buildGrepCommand(opts)
 	if err != nil {
-		return nil, fmt.Errorf("invalid regex pattern: %w", err)
+		return "", false, err
 	}
-	return func(line string) bool { return re.MatchString(line) }, nil
+	cmd := exec.CommandContext(ctx, backend, args...)
+	cwd := opts.AbsPath
+	if info, statErr := os.Stat(opts.AbsPath); statErr == nil && !info.IsDir() {
+		cwd = filepath.Dir(opts.AbsPath)
+	}
+	cmd.Dir = cwd
+
+	stdout := newCappedBuffer(maxGrepCapturedBytes)
+	stderr := newCappedBuffer(maxGrepCapturedBytes / 2)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	runErr := cmd.Run()
+	output := strings.TrimSpace(stdout.String())
+	errOut := strings.TrimSpace(stderr.String())
+	captureTruncated := stdout.Truncated() || stderr.Truncated()
+
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 && output == "" && errOut == "" {
+			return "", captureTruncated, errNoMatches
+		}
+		detail := strings.TrimSpace(errOut)
+		if detail == "" {
+			detail = strings.TrimSpace(output)
+		}
+		if detail != "" {
+			return "", captureTruncated, fmt.Errorf("%s failed: %w\n%s", backend, runErr, detail)
+		}
+		return "", captureTruncated, fmt.Errorf("%s failed: %w", backend, runErr)
+	}
+
+	if output == "" {
+		return "", captureTruncated, errNoMatches
+	}
+	return output, captureTruncated, nil
 }
 
-func splitLines(s string) []string {
-	r := strings.NewReader(strings.ReplaceAll(s, "\r\n", "\n"))
-	scanner := bufio.NewScanner(r)
-	lines := []string{}
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+func buildGrepCommand(opts grepRunOptions) (string, []string, error) {
+	if _, err := os.Stat(opts.AbsPath); err != nil {
+		return "", nil, fmt.Errorf("stat path: %w", err)
 	}
-	if bytes.HasSuffix([]byte(s), []byte("\n")) {
-		lines = append(lines, "")
+	if rgPath, err := exec.LookPath("rg"); err == nil {
+		return rgPath, buildRGArgs(opts), nil
 	}
-	return lines
+	if grepPath, err := exec.LookPath("grep"); err == nil {
+		return grepPath, buildGrepArgs(opts), nil
+	}
+	return "", nil, fmt.Errorf("neither ripgrep (rg) nor grep is available")
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+func buildRGArgs(opts grepRunOptions) []string {
+	args := []string{"--line-number", "--no-heading", "--color=never"}
+	if opts.Literal {
+		args = append(args, "-F")
 	}
-	return b
+	if opts.IgnoreCase {
+		args = append(args, "-i")
+	}
+	if opts.ContextLines > 0 {
+		args = append(args, "-C", strconv.Itoa(opts.ContextLines))
+	}
+	if opts.Limit > 0 {
+		args = append(args, "--max-count", strconv.Itoa(opts.Limit))
+	}
+	args = append(args, "--glob", "!.git/**", "--glob", "!node_modules/**")
+	if strings.TrimSpace(opts.Glob) != "" {
+		args = append(args, "--glob", strings.TrimSpace(opts.Glob))
+	}
+	args = append(args, opts.Pattern, opts.AbsPath)
+	return args
+}
+
+func buildGrepArgs(opts grepRunOptions) []string {
+	args := []string{"-n", "-I"}
+	if opts.Literal {
+		args = append(args, "-F")
+	}
+	if opts.IgnoreCase {
+		args = append(args, "-i")
+	}
+	if opts.ContextLines > 0 {
+		args = append(args, "-C", strconv.Itoa(opts.ContextLines))
+	}
+	if opts.Limit > 0 {
+		args = append(args, "-m", strconv.Itoa(opts.Limit))
+	}
+	if strings.TrimSpace(opts.Glob) != "" {
+		args = append(args, "--include="+strings.TrimSpace(opts.Glob))
+	}
+
+	if info, err := os.Stat(opts.AbsPath); err == nil && info.IsDir() {
+		args = append(args, "-R", "--exclude-dir=.git", "--exclude-dir=node_modules")
+	}
+	args = append(args, opts.Pattern, opts.AbsPath)
+	return args
+}
+
+type cappedBuffer struct {
+	maxBytes int
+	total    int
+	buf      bytes.Buffer
+}
+
+func newCappedBuffer(maxBytes int) *cappedBuffer {
+	if maxBytes <= 0 {
+		maxBytes = maxGrepCapturedBytes
+	}
+	return &cappedBuffer{maxBytes: maxBytes}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.total += len(p)
+	remaining := b.maxBytes - b.buf.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			_, _ = b.buf.Write(p[:remaining])
+		} else {
+			_, _ = b.buf.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	return b.buf.String()
+}
+
+func (b *cappedBuffer) Truncated() bool {
+	return b.total > b.maxBytes
 }

@@ -1,8 +1,10 @@
 package builtintools
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -53,41 +55,123 @@ func (t *ReadTool) Execute(_ context.Context, args map[string]any) (string, erro
 		return "", err
 	}
 
-	data, err := os.ReadFile(abs)
+	f, err := os.Open(abs)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	if isLikelyBinary(data) {
+	defer f.Close()
+
+	sample := make([]byte, 8192)
+	n, sampleErr := f.Read(sample)
+	if sampleErr != nil && sampleErr != io.EOF {
+		return "", fmt.Errorf("read %s: %w", path, sampleErr)
+	}
+	if isLikelyBinary(sample[:n]) {
 		return "File appears to be binary; read tool only returns text files.", nil
 	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek %s: %w", path, err)
+	}
 
-	text := string(data)
-	lines := strings.Split(text, "\n")
-	start := 0
+	startLine := 1
 	if offset > 0 {
-		start = offset - 1
+		startLine = offset
 	}
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(lines) {
-		return "", fmt.Errorf("offset %d is past end of file (%d lines)", offset, len(lines))
+	if startLine < 1 {
+		startLine = 1
 	}
 
-	selected := lines[start:]
-	if limit > 0 && limit < len(selected) {
-		selected = selected[:limit]
+	var builder strings.Builder
+	reader := bufio.NewReader(f)
+	totalLines := 0
+	includedLines := 0
+	includedBytes := 0
+	lastIncludedLine := startLine - 1
+	endedWithNewline := false
+	truncated := false
+	truncReason := ""
+
+	appendLine := func(line string, lineNo int) {
+		if lineNo < startLine {
+			return
+		}
+		if limit > 0 && (lineNo-startLine+1) > limit {
+			return
+		}
+		if truncated {
+			return
+		}
+		if includedLines >= DefaultMaxLines {
+			truncated = true
+			truncReason = "lines"
+			return
+		}
+
+		lineBytes := len(line)
+		if includedLines > 0 {
+			lineBytes++
+		}
+		if includedBytes+lineBytes > DefaultMaxBytes {
+			truncated = true
+			truncReason = "bytes"
+			return
+		}
+
+		if includedLines > 0 {
+			builder.WriteByte('\n')
+			includedBytes++
+		}
+		builder.WriteString(line)
+		includedBytes += len(line)
+		includedLines++
+		lastIncludedLine = lineNo
 	}
 
-	content := strings.Join(selected, "\n")
-	tr := TruncateHead(content, DefaultMaxLines, DefaultMaxBytes)
-	output := tr.Content
-	if tr.Truncated {
-		nextOffset := start + strings.Count(tr.Content, "\n") + 2
-		output += fmt.Sprintf("\n\n[Output truncated by %s; total file lines: %d. Use offset=%d to continue.]", tr.Reason, len(lines), nextOffset)
-	} else if limit > 0 && (start+limit) < len(lines) {
-		nextOffset := start + limit + 1
-		output += fmt.Sprintf("\n\n[%d more lines available. Use offset=%d to continue.]", len(lines)-(start+limit), nextOffset)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return "", fmt.Errorf("read %s: %w", path, readErr)
+		}
+		if readErr == io.EOF && line == "" {
+			break
+		}
+
+		hasNewline := strings.HasSuffix(line, "\n")
+		if hasNewline {
+			line = strings.TrimSuffix(line, "\n")
+		}
+		line = strings.TrimSuffix(line, "\r")
+
+		totalLines++
+		appendLine(line, totalLines)
+		endedWithNewline = hasNewline
+
+		if readErr == io.EOF {
+			break
+		}
+	}
+
+	// Match strings.Split behavior for trailing newline and empty file.
+	if totalLines == 0 || endedWithNewline {
+		totalLines++
+		appendLine("", totalLines)
+	}
+
+	if startLine > totalLines {
+		return "", fmt.Errorf("offset %d is past end of file (%d lines)", offset, totalLines)
+	}
+
+	output := builder.String()
+	if truncated {
+		nextOffset := lastIncludedLine + 1
+		if includedLines == 0 {
+			nextOffset = startLine + 1
+		}
+		output += fmt.Sprintf("\n\n[Output truncated by %s; total file lines: %d. Use offset=%d to continue.]", truncReason, totalLines, nextOffset)
+	} else if limit > 0 && (startLine-1+limit) < totalLines {
+		nextOffset := startLine + limit
+		remaining := totalLines - (startLine - 1 + limit)
+		output += fmt.Sprintf("\n\n[%d more lines available. Use offset=%d to continue.]", remaining, nextOffset)
 	}
 
 	if output == "" {
