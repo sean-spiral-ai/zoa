@@ -11,6 +11,7 @@ import (
 
 	baselineagent "zoa/baselineagent"
 	"zoa/internal/gatewayclient"
+	"zoa/internal/keys"
 )
 
 func runTUI(args []string) int {
@@ -43,6 +44,9 @@ func runTUI(args []string) int {
 	if tuiFlags.NArg() != 0 {
 		fmt.Fprintf(os.Stderr, "error: unexpected positional args: %s\n", strings.Join(tuiFlags.Args(), " "))
 		return 2
+	}
+	if err := keys.LoadDotEnv(".env"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: loading .env: %v\n", err)
 	}
 
 	if strings.TrimSpace(model) == "" {
