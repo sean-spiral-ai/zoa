@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ type TaskContextOptions struct {
 	Temperature float64
 	SQLitePath  string
 
+	logger       *slog.Logger
 	sqlDB        sqlExecutor
 	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
@@ -30,6 +32,7 @@ type TaskContextOptions struct {
 
 type TaskContext struct {
 	ctx          context.Context
+	logger       *slog.Logger
 	apiKey       string
 	baseConfig   baselineagent.ConversationConfig
 	mainConv     baselineagent.Conversation
@@ -102,8 +105,15 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		return nil, fmt.Errorf("sqlite is required for task context")
 	}
 
+	tcLogger := opts.logger
+	if tcLogger == nil {
+		tcLogger = slog.Default()
+	}
+	tcLogger = tcLogger.With("component", "task_context")
+
 	return &TaskContext{
 		ctx:          ctx,
+		logger:       tcLogger,
 		apiKey:       apiKey,
 		baseConfig:   baseConfig,
 		mainConv:     nil,
@@ -127,6 +137,7 @@ func (t *TaskContext) Close() error {
 }
 
 func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) {
+	t.logger.Debug("sql exec", "query", truncate(query, 100))
 	db, err := t.requireSQL()
 	if err != nil {
 		return SqlExecResult{}, err
@@ -146,6 +157,7 @@ func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) 
 }
 
 func (t *TaskContext) SqlQuery(query string, args ...any) (SqlQueryResult, error) {
+	t.logger.Debug("sql query", "query", truncate(query, 100))
 	db, err := t.requireSQL()
 	if err != nil {
 		return SqlQueryResult{}, err
@@ -183,6 +195,7 @@ func (t *TaskContext) SqlQuery(query string, args ...any) (SqlQueryResult, error
 	if err := rows.Err(); err != nil {
 		return SqlQueryResult{}, err
 	}
+	t.logger.Debug("sql query completed", "query", truncate(query, 100), "rows", len(out.Rows))
 	return out, nil
 }
 
@@ -198,10 +211,13 @@ func (t *TaskContext) SqlTx(fn func(*sql.Tx) error) error {
 	if err != nil {
 		return err
 	}
+	t.logger.Debug("sql tx started")
 	if err := fn(tx); err != nil {
 		_ = tx.Rollback()
+		t.logger.Debug("sql tx rolled back", "error", err)
 		return err
 	}
+	t.logger.Debug("sql tx completed")
 	return tx.Commit()
 }
 
@@ -223,6 +239,7 @@ func (t *TaskContext) RegisterPump(pumpID, functionID string, input map[string]a
 	if interval <= 0 {
 		return fmt.Errorf("interval must be > 0")
 	}
+	t.logger.Debug("register pump", "pump_id", pumpID, "function_id", functionID, "interval", interval)
 	return t.registerPump(pumpID, functionID, cloneMapAny(input), interval)
 }
 
@@ -237,6 +254,7 @@ func (t *TaskContext) Spawn(functionID string, input map[string]any, opts SpawnO
 	if functionID == "" {
 		return "", fmt.Errorf("function_id cannot be empty")
 	}
+	t.logger.Debug("spawn task", "function_id", functionID)
 	return t.spawnTask(functionID, cloneMapAny(input), opts)
 }
 
@@ -266,6 +284,7 @@ func normalizeSQLValue(v any) any {
 
 // NLExec appends to the TaskContext's persistent conversation and returns raw text.
 func (t *TaskContext) NLExec(prompt string, data map[string]any) (string, error) {
+	t.logger.Debug("nl exec", "prompt_length", len(prompt))
 	if err := t.ensureMainConversation(); err != nil {
 		return "", err
 	}
@@ -282,6 +301,7 @@ func (t *TaskContext) NLExec(prompt string, data map[string]any) (string, error)
 
 // NLExecTyped appends to the TaskContext's persistent conversation and decodes a JSON response into out.
 func (t *TaskContext) NLExecTyped(prompt string, data map[string]any, out any) error {
+	t.logger.Debug("nl exec typed", "prompt_length", len(prompt))
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
@@ -315,6 +335,7 @@ func NLExecTyped[T any](tc *TaskContext, prompt string, data map[string]any) (T,
 
 // NLCondition evaluates a natural-language condition in an isolated fork of the main conversation.
 func (t *TaskContext) NLCondition(conditionID string, conditionPrompt string, data map[string]any) error {
+	t.logger.Debug("nl condition", "condition_id", conditionID)
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
@@ -356,6 +377,7 @@ func (t *TaskContext) ensureMainConversation() error {
 	if t.mainConv != nil {
 		return nil
 	}
+	t.logger.Debug("initializing main conversation", "model", t.baseConfig.Model)
 	apiKey, err := t.resolveAPIKey()
 	if err != nil {
 		return err
@@ -509,6 +531,13 @@ func parseConditionResultJSON(text string) (conditionJSON, error) {
 	}
 	out.Explanation = strings.TrimSpace(out.Explanation)
 	return out, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func cloneContextMap(in map[string]any) map[string]any {

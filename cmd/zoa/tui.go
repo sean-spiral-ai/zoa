@@ -10,6 +10,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
 )
@@ -114,7 +115,7 @@ func runTUI(args []string) int {
 			break
 		}
 
-		recvRes, err := client.Enqueue(line)
+		recvRes, err := client.Enqueue(line, gatewaychannel.TUIURI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "recv enqueue error: %v\n", err)
 			continue
@@ -152,9 +153,24 @@ func pollOutbox(ctx context.Context, client gatewayclient.GatewayClient, interva
 				continue
 			}
 			for _, msg := range messages {
+				if !isTUIOutboxChannel(msg.Channel) {
+					continue
+				}
 				fmt.Printf("\n[%s #%d] %s\n", msg.Session, msg.ID, msg.Text)
 			}
 			lastID = maxID
 		}
 	}
+}
+
+func isTUIOutboxChannel(channelURI string) bool {
+	channelURI = strings.TrimSpace(channelURI)
+	if channelURI == "" {
+		return true
+	}
+	target, err := gatewaychannel.Parse(channelURI)
+	if err != nil {
+		return false
+	}
+	return target.Transport == gatewaychannel.TransportTUI
 }

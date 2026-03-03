@@ -20,7 +20,7 @@ const (
 )
 
 type GatewayClient interface {
-	Enqueue(message string) (EnqueueResult, error)
+	Enqueue(message string, channelURI string) (EnqueueResult, error)
 	OutboxSince(lastID int64, limit int) ([]OutboxMessage, int64, error)
 	OutboxMaxID() (int64, error)
 	Session() string
@@ -48,6 +48,7 @@ type EnqueueResult struct {
 type OutboxMessage struct {
 	ID        int64
 	Session   string
+	Channel   string
 	Text      string
 	InReplyTo int64
 	SentAt    string
@@ -152,7 +153,7 @@ func (c *localGatewayClient) Close() error {
 	return c.taskManager.Close()
 }
 
-func (c *localGatewayClient) Enqueue(message string) (EnqueueResult, error) {
+func (c *localGatewayClient) Enqueue(message string, channelURI string) (EnqueueResult, error) {
 	if c == nil {
 		return EnqueueResult{}, fmt.Errorf("gateway client is nil")
 	}
@@ -162,6 +163,9 @@ func (c *localGatewayClient) Enqueue(message string) (EnqueueResult, error) {
 
 	input := cloneMapAny(c.recvDefaults)
 	input["message"] = message
+	if channel := strings.TrimSpace(channelURI); channel != "" {
+		input["channel"] = channel
+	}
 
 	snapshot, err := runAndWait(c.taskManager, "gateway.recv", input, lmfrt.SpawnOptions{})
 	if err != nil {
@@ -308,6 +312,9 @@ func outboxMessageFromMap(item map[string]any) (OutboxMessage, bool) {
 		ID:      id,
 		Session: session,
 		Text:    text,
+	}
+	if channel, ok := item["channel"].(string); ok {
+		msg.Channel = channel
 	}
 	if replyID, ok := int64Value(item["in_reply_to"]); ok {
 		msg.InReplyTo = replyID

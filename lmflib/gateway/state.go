@@ -24,6 +24,7 @@ type inboundRow struct {
 	ID         int64
 	Attempt    int
 	Session    string
+	Channel    string
 	Text       string
 	ReceivedAt string
 	PumpInput  map[string]any
@@ -32,6 +33,7 @@ type inboundRow struct {
 type outboxRow struct {
 	ID        int64
 	Session   string
+	Channel   string
 	Text      string
 	InReplyTo int64
 	SentAt    string
@@ -216,17 +218,18 @@ func (s *state) tableHasColumn(tableName, columnName string) (bool, error) {
 	return false, nil
 }
 
-func (s *state) insertInbound(session, text string, pumpInput map[string]any, at time.Time) (int64, error) {
+func (s *state) insertInbound(session, channel, text string, pumpInput map[string]any, at time.Time) (int64, error) {
 	if pumpInput == nil {
 		pumpInput = map[string]any{}
 	}
+	channel = strings.TrimSpace(channel)
 	inputJSON, err := json.Marshal(pumpInput)
 	if err != nil {
 		return 0, fmt.Errorf("encode inbound pump input: %w", err)
 	}
 	res, err := s.tc.SqlExec(
 		`INSERT INTO gateway__inbound(session, channel, text, input_json, received_at, status, attempt_count, next_attempt_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
-		session, session, text, string(inputJSON), at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano),
+		session, channel, text, string(inputJSON), at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, err
@@ -324,7 +327,7 @@ func (s *state) claimDueInboundID(session string, now time.Time, leaseDuration t
 
 func (s *state) inboundByID(inboundID int64) (*inboundRow, error) {
 	queryRes, err := s.tc.SqlQuery(
-		`SELECT id, COALESCE(attempt_count, 0) AS attempt_count, session, text, input_json, received_at
+		`SELECT id, COALESCE(attempt_count, 0) AS attempt_count, session, channel, text, input_json, received_at
 		 FROM gateway__inbound
 		 WHERE id = ?
 		 LIMIT 1`,
@@ -346,6 +349,7 @@ func (s *state) inboundByID(inboundID int64) (*inboundRow, error) {
 		attempt = 1
 	}
 	session, _ := item["session"].(string)
+	channel, _ := item["channel"].(string)
 	text, _ := item["text"].(string)
 	inputJSON, _ := item["input_json"].(string)
 	receivedAt, _ := item["received_at"].(string)
@@ -360,6 +364,7 @@ func (s *state) inboundByID(inboundID int64) (*inboundRow, error) {
 		ID:         id,
 		Attempt:    attempt,
 		Session:    session,
+		Channel:    channel,
 		Text:       text,
 		ReceivedAt: receivedAt,
 		PumpInput:  pumpInput,
@@ -407,20 +412,21 @@ func (s *state) markInboundFailed(inboundID int64, errorText string, at time.Tim
 	return err
 }
 
-func (s *state) insertOutbox(session, text string, inReplyTo *int64, at time.Time) (int64, error) {
+func (s *state) insertOutbox(session, channel, text string, inReplyTo *int64, at time.Time) (int64, error) {
 	var (
 		res lmfrt.SqlExecResult
 		err error
 	)
+	channel = strings.TrimSpace(channel)
 	if inReplyTo == nil {
 		res, err = s.tc.SqlExec(
 			`INSERT INTO gateway__outbox(session, channel, text, in_reply_to, sent_at) VALUES (?, ?, ?, NULL, ?)`,
-			session, session, text, at.UTC().Format(time.RFC3339Nano),
+			session, channel, text, at.UTC().Format(time.RFC3339Nano),
 		)
 	} else {
 		res, err = s.tc.SqlExec(
 			`INSERT INTO gateway__outbox(session, channel, text, in_reply_to, sent_at) VALUES (?, ?, ?, ?, ?)`,
-			session, session, text, *inReplyTo, at.UTC().Format(time.RFC3339Nano),
+			session, channel, text, *inReplyTo, at.UTC().Format(time.RFC3339Nano),
 		)
 	}
 	if err != nil {
@@ -434,7 +440,7 @@ func (s *state) insertOutbox(session, text string, inReplyTo *int64, at time.Tim
 
 func (s *state) outboxSince(session string, lastID int64, limit int) ([]outboxRow, error) {
 	queryRes, err := s.tc.SqlQuery(
-		`SELECT id, session, text, COALESCE(in_reply_to, 0) AS in_reply_to, sent_at
+		`SELECT id, session, channel, text, COALESCE(in_reply_to, 0) AS in_reply_to, sent_at
 		 FROM gateway__outbox
 		 WHERE id > ? AND session = ?
 		 ORDER BY id
@@ -452,11 +458,13 @@ func (s *state) outboxSince(session string, lastID int64, limit int) ([]outboxRo
 		}
 		inReplyTo, _ := lmflib.Int64FromValue(item["in_reply_to"])
 		sessionVal, _ := item["session"].(string)
+		channelVal, _ := item["channel"].(string)
 		textVal, _ := item["text"].(string)
 		sentAtVal, _ := item["sent_at"].(string)
 		rows = append(rows, outboxRow{
 			ID:        id,
 			Session:   sessionVal,
+			Channel:   channelVal,
 			Text:      textVal,
 			InReplyTo: inReplyTo,
 			SentAt:    sentAtVal,
@@ -467,7 +475,7 @@ func (s *state) outboxSince(session string, lastID int64, limit int) ([]outboxRo
 
 func (s *state) recentOutbox(session string, limit int) ([]outboxRow, error) {
 	queryRes, err := s.tc.SqlQuery(
-		`SELECT id, session, text, COALESCE(in_reply_to, 0) AS in_reply_to, sent_at
+		`SELECT id, session, channel, text, COALESCE(in_reply_to, 0) AS in_reply_to, sent_at
 		 FROM gateway__outbox
 		 WHERE session = ?
 		 ORDER BY id DESC
@@ -485,11 +493,13 @@ func (s *state) recentOutbox(session string, limit int) ([]outboxRow, error) {
 		}
 		inReplyTo, _ := lmflib.Int64FromValue(item["in_reply_to"])
 		sessionVal, _ := item["session"].(string)
+		channelVal, _ := item["channel"].(string)
 		textVal, _ := item["text"].(string)
 		sentAtVal, _ := item["sent_at"].(string)
 		rows = append(rows, outboxRow{
 			ID:        id,
 			Session:   sessionVal,
+			Channel:   channelVal,
 			Text:      textVal,
 			InReplyTo: inReplyTo,
 			SentAt:    sentAtVal,

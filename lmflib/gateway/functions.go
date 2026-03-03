@@ -69,6 +69,7 @@ func recvFunction() *lmfrt.Function {
 			"type": "object",
 			"properties": map[string]any{
 				"session":     map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
+				"channel":     map[string]any{"type": "string", "description": "Gateway channel URI (for example gatewaychannel://tui or gatewaychannel://slack?channel_id=...)"},
 				"message":     map[string]any{"type": "string", "description": "Raw user message text"},
 				"cwd":         map[string]any{"type": "string"},
 				"model":       map[string]any{"type": "string"},
@@ -99,11 +100,16 @@ func recvFunction() *lmfrt.Function {
 			if err != nil {
 				return nil, err
 			}
+			channel, err := lmflib.StringInput(input, "channel", false)
+			if err != nil {
+				return nil, err
+			}
+			channel = strings.TrimSpace(channel)
 			pumpInput, err := inboundPumpInputFromRecvInput(input)
 			if err != nil {
 				return nil, err
 			}
-			inboundID, err := state.insertInbound(session, message, pumpInput, time.Now().UTC())
+			inboundID, err := state.insertInbound(session, channel, message, pumpInput, time.Now().UTC())
 			if err != nil {
 				return nil, err
 			}
@@ -210,7 +216,7 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 	return &reliable.JobCompleter[inboundPumpJob]{
 		MaxAttempts: 3,
 		Logger:      slog.Default().With("component", "inbound_pump", "session", session),
-		ClaimDue:    func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
+		ClaimDue: func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
 			row, err := state.claimDueInbound(session, now, inboundLeaseDuration)
 			if err != nil {
 				return nil, err
@@ -235,7 +241,7 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			return nil
 		},
 		Complete: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time) error {
-			outboxID, err := state.insertOutbox(session, job.Value.reply, &job.ID, now)
+			outboxID, err := state.insertOutbox(session, job.Value.row.Channel, job.Value.reply, &job.ID, now)
 			if err != nil {
 				return err
 			}
@@ -252,7 +258,7 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 		},
 		Fail: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error) error {
 			reply := fmt.Sprintf("Failed to process message %d: %v", job.ID, cause)
-			outboxID, err := state.insertOutbox(session, reply, &job.ID, now)
+			outboxID, err := state.insertOutbox(session, job.Value.row.Channel, reply, &job.ID, now)
 			if err != nil {
 				return err
 			}
@@ -293,6 +299,7 @@ func outboxSinceFunction() *lmfrt.Function {
 						"properties": map[string]any{
 							"id":          map[string]any{"type": "integer"},
 							"session":     map[string]any{"type": "string"},
+							"channel":     map[string]any{"type": "string"},
 							"text":        map[string]any{"type": "string"},
 							"in_reply_to": map[string]any{"type": "integer"},
 							"sent_at":     map[string]any{"type": "string"},
@@ -336,6 +343,7 @@ func outboxSinceFunction() *lmfrt.Function {
 				items = append(items, map[string]any{
 					"id":          row.ID,
 					"session":     row.Session,
+					"channel":     row.Channel,
 					"text":        row.Text,
 					"in_reply_to": row.InReplyTo,
 					"sent_at":     row.SentAt,

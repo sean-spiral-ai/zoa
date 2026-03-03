@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 )
 
@@ -148,7 +149,7 @@ func (s *Service) handleDMEvent(event DMEvent) error {
 		return nil
 	}
 
-	result, err := s.gateway.Enqueue(text)
+	result, err := s.gateway.Enqueue(text, gatewaychannel.SlackURI(event.ChannelID))
 	if err != nil {
 		return err
 	}
@@ -215,11 +216,6 @@ func (s *Service) runOutboxLoop(ctx context.Context, initialLastID int64) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			boundChannel := s.boundChannel()
-			if strings.TrimSpace(boundChannel) == "" {
-				continue
-			}
-
 			messages, _, err := s.gateway.OutboxSince(lastID, s.cfg.OutboxLimit)
 			if err != nil {
 				s.logger.Error("outbox poll error", "error", err)
@@ -227,14 +223,46 @@ func (s *Service) runOutboxLoop(ctx context.Context, initialLastID int64) {
 			}
 
 			for _, msg := range messages {
-				if err := s.sendWithRetry(ctx, boundChannel, msg.Text); err != nil {
-					s.logger.Error("outbox delivery error", "outbox_id", msg.ID, "error", err)
+				channelID, ok := s.resolveSlackOutboxChannel(msg)
+				if !ok {
+					lastID = msg.ID
+					continue
+				}
+				if err := s.sendWithRetry(ctx, channelID, msg.Text); err != nil {
+					s.logger.Error("outbox delivery error", "outbox_id", msg.ID, "channel", channelID, "error", err)
 					break
 				}
-				s.logger.Info("outbox delivered", "outbox_id", msg.ID, "channel", boundChannel)
+				s.logger.Info("outbox delivered", "outbox_id", msg.ID, "channel", channelID)
 				lastID = msg.ID
 			}
 		}
+	}
+}
+
+func (s *Service) resolveSlackOutboxChannel(msg gatewayclient.OutboxMessage) (string, bool) {
+	channelURI := strings.TrimSpace(msg.Channel)
+	if channelURI == "" {
+		s.logger.Warn("outbox message missing channel URI", "outbox_id", msg.ID)
+		return "", false
+	}
+	target, err := gatewaychannel.Parse(channelURI)
+	if err != nil {
+		s.logger.Error("invalid outbox channel URI", "outbox_id", msg.ID, "channel", msg.Channel, "error", err)
+		return "", false
+	}
+	switch target.Transport {
+	case gatewaychannel.TransportSlack:
+		channelID := strings.TrimSpace(target.SlackChannelID)
+		if channelID != "" {
+			return channelID, true
+		}
+		s.logger.Error("slack outbox missing channel_id", "outbox_id", msg.ID, "channel", msg.Channel)
+		return "", false
+	case gatewaychannel.TransportTUI:
+		return "", false
+	default:
+		s.logger.Warn("outbox transport not handled by slack bridge", "outbox_id", msg.ID, "transport", target.Transport)
+		return "", false
 	}
 }
 

@@ -45,6 +45,9 @@ type TaskManagerOptions struct {
 	// SQLitePath configures the runtime SQLite database path.
 	// When set, TaskManager opens and owns this connection.
 	SQLitePath string
+
+	// Logger is an optional structured logger. Defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 type SpawnOptions struct {
@@ -73,6 +76,7 @@ type TaskManager struct {
 	registry *Registry
 	baseCtx  context.Context
 	opts     TaskManagerOptions
+	logger   *slog.Logger
 	sqlDB    *sql.DB
 	taskLog  *TaskLogState
 
@@ -101,10 +105,17 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 	if strings.TrimSpace(opts.SQLitePath) == "" {
 		return nil, fmt.Errorf("sqlite path is required for task manager")
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "task_manager")
+
 	manager := &TaskManager{
 		registry: registry,
 		baseCtx:  ctx,
 		opts:     opts,
+		logger:   logger,
 		tasks:    map[string]*taskRecord{},
 		pumps:    map[string]*pumpRunner{},
 	}
@@ -138,6 +149,7 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 		return nil, err
 	}
 	manager.nextID = maxTaskSeq
+	logger.Info("task manager started", "sqlite_path", resolvedPath)
 	return manager, nil
 }
 
@@ -145,6 +157,7 @@ func (m *TaskManager) Close() error {
 	if m == nil {
 		return nil
 	}
+	m.logger.Info("task manager closing")
 	m.pumpMu.Lock()
 	if m.closed {
 		m.pumpMu.Unlock()
@@ -171,6 +184,9 @@ func (m *TaskManager) Spawn(functionID string, input map[string]any, opts SpawnO
 	taskID, rec := m.newRecord(functionID, mergedInput, opts)
 	_ = m.persistTask(taskID)
 
+	if !opts.HideInLogByDefault {
+		m.logger.Info("task spawned", "task_id", taskID, "function_id", functionID)
+	}
 	go m.runTask(fn, rec, mergedInput)
 	return taskID, nil
 }
@@ -189,6 +205,7 @@ func (m *TaskManager) Init() error {
 	}
 	m.initCalled = true
 	m.initMu.Unlock()
+	m.logger.Info("running init functions")
 	for _, fn := range m.registry.List() {
 		if !strings.HasSuffix(fn.ID, ".__init__") {
 			continue
@@ -257,9 +274,12 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	now := time.Now().UTC()
 	m.mu.Lock()
 	rec.StartedAt = &now
+	taskID := rec.TaskID
+	functionID := rec.FunctionID
 	m.mu.Unlock()
-	_ = m.persistTask(rec.TaskID)
+	_ = m.persistTask(taskID)
 
+	m.logger.Debug("task started", "task_id", taskID, "function_id", functionID)
 	res, err := m.runFunction(fn, input)
 
 	end := time.Now().UTC()
@@ -272,11 +292,13 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 		rec.Status = TaskStatusDone
 		rec.Output = cloneMapAny(res.Output)
 	}
+	status := rec.Status
 	rec.conversation = cloneConversationMessages(res.Conversation)
 	done := rec.done
-	taskID := rec.TaskID
 	m.mu.Unlock()
 	_ = m.persistTask(taskID)
+
+	m.logger.Debug("task finished", "task_id", taskID, "function_id", functionID, "status", status, "duration", end.Sub(now))
 	close(done)
 }
 
@@ -306,6 +328,7 @@ func (m *TaskManager) runFunction(fn *Function, input map[string]any) (RunResult
 	}
 
 	tcOpts := taskContextOptionsFromInput(input)
+	tcOpts.logger = m.logger
 	tcOpts.SQLitePath = m.opts.SQLitePath
 	tcOpts.sqlDB = m.sqlDB
 	tcOpts.registerPump = m.registerPump
@@ -384,6 +407,7 @@ func (m *TaskManager) registerPump(pumpID, functionID string, input map[string]a
 	m.pumps[pumpID] = runner
 	m.pumpMu.Unlock()
 
+	m.logger.Info("pump registered", "pump_id", pumpID, "function_id", functionID, "interval", interval)
 	if toStop != nil {
 		toStop.cancel()
 		<-toStop.done
@@ -402,6 +426,7 @@ func (m *TaskManager) newLMFunctionTools() ([]baselineagent.Tool, error) {
 
 func (m *TaskManager) stopAllPumps() {
 	m.pumpMu.Lock()
+	m.logger.Debug("stopping all pumps", "count", len(m.pumps))
 	pumps := make([]*pumpRunner, 0, len(m.pumps))
 	for id, runner := range m.pumps {
 		delete(m.pumps, id)
@@ -425,7 +450,7 @@ func (m *TaskManager) runPumpLoop(ctx context.Context, runner *pumpRunner) {
 
 	runOnce := func() {
 		if err := m.runPumpOnce(runner); err != nil {
-			slog.Error("pump run error", "pump", runner.id, "error", err)
+			m.logger.Error("pump run error", "pump", runner.id, "error", err)
 		}
 	}
 
