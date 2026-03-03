@@ -4,10 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -35,9 +34,10 @@ func runSlack(args []string) int {
 
 		appTokenFlag string
 		botTokenFlag string
-		cursorPath   string
+		logLevel     string
 	)
 
+	slackFlags.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	slackFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	slackFlags.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	slackFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
@@ -48,7 +48,6 @@ func runSlack(args []string) int {
 
 	slackFlags.StringVar(&appTokenFlag, "slack-app-token", "", "Slack app token (xapp-..., default: SLACK_APP_TOKEN)")
 	slackFlags.StringVar(&botTokenFlag, "slack-bot-token", "", "Slack bot token (xoxb-..., default: SLACK_BOT_TOKEN)")
-	slackFlags.StringVar(&cursorPath, "cursor-file", "", "Path to persisted outbox cursor file")
 
 	if err := slackFlags.Parse(args); err != nil {
 		return 2
@@ -57,6 +56,15 @@ func runSlack(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: unexpected positional args: %s\n", strings.Join(slackFlags.Args(), " "))
 		return 2
 	}
+	var slogLevel slog.Level
+	if err := slogLevel.UnmarshalText([]byte(logLevel)); err != nil {
+		fmt.Fprintf(os.Stderr, "error: invalid log level %q (use debug, info, warn, error)\n", logLevel)
+		return 2
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slogLevel,
+	})))
+
 	if err := keys.LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: loading .env: %v\n", err)
 	}
@@ -95,10 +103,6 @@ func runSlack(args []string) int {
 		return 1
 	}
 
-	if strings.TrimSpace(cursorPath) == "" {
-		cursorPath = filepath.Join(sessionDir, "slack_outbox_cursor.json")
-	}
-
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
 		Session:     gatewayclient.DefaultSession,
 		SessionDir:  sessionDir,
@@ -118,14 +122,11 @@ func runSlack(args []string) int {
 		}
 	}()
 
-	logger := log.New(os.Stderr, "slack: ", log.LstdFlags)
 	service, err := slackbridge.NewService(slackbridge.Config{
 		AppToken:           appToken,
 		BotToken:           botToken,
 		OutboxPollInterval: time.Duration(pollMs) * time.Millisecond,
 		OutboxLimit:        100,
-		CursorPath:         cursorPath,
-		Logger:             logger,
 	}, client)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing slack service: %v\n", err)

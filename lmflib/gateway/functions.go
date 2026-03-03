@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,7 +208,9 @@ type inboundPumpJob struct {
 
 func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
 	return &reliable.JobCompleter[inboundPumpJob]{
-		ClaimDue: func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
+		MaxAttempts: 3,
+		Logger:      slog.Default().With("component", "inbound_pump", "session", session),
+		ClaimDue:    func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
 			row, err := state.claimDueInbound(session, now, inboundLeaseDuration)
 			if err != nil {
 				return nil, err
@@ -351,6 +354,38 @@ func outboxSinceFunction() *lmfrt.Function {
 	}
 }
 
+func outboxMaxIDFunction() *lmfrt.Function {
+	return &lmfrt.Function{
+		ID:        "gateway.outbox_max_id",
+		WhenToUse: "Return the current maximum outbox row ID for a session.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session": map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
+			},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"max_id": map[string]any{"type": "integer"},
+			},
+			"required": []string{"max_id"},
+		},
+		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+			state := newState(tc)
+			session, err := gatewaySessionInput(input)
+			if err != nil {
+				return nil, err
+			}
+			maxID, err := state.outboxMaxID(session)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"max_id": maxID}, nil
+		},
+	}
+}
+
 func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("inbound row is nil")
@@ -489,10 +524,15 @@ func renderSlashResponse(state *state, tc *lmfrt.TaskContext, session string, te
 		if err != nil {
 			return "", err
 		}
+		processingCount, err := state.processingCount(session)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf(
-			"Session: %s\nState: idle\nActive: none\nQueue: %d\nOutbox: %d",
+			"Session: %s\nPending: %d\nProcessing: %d\nOutbox: %d",
 			session,
 			pendingCount,
+			processingCount,
 			outboxCount,
 		), nil
 	case "/queue":
@@ -645,7 +685,10 @@ func isRetryableInboundError(err error) bool {
 	if strings.Contains(text, "connection refused") {
 		return true
 	}
-	if strings.Contains(text, "502") || strings.Contains(text, "503") || strings.Contains(text, "504") {
+	if strings.Contains(text, "internal server") {
+		return true
+	}
+	if strings.Contains(text, "500") || strings.Contains(text, "502") || strings.Contains(text, "503") || strings.Contains(text, "504") || strings.Contains(text, "529") {
 		return true
 	}
 	return false

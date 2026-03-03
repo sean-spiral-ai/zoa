@@ -498,6 +498,20 @@ func (s *state) recentOutbox(session string, limit int) ([]outboxRow, error) {
 	return rows, nil
 }
 
+func (s *state) outboxMaxID(session string) (int64, error) {
+	queryRes, err := s.tc.SqlQuery(
+		`SELECT COALESCE(MAX(id), 0) AS max_id FROM gateway__outbox WHERE session = ?`,
+		session,
+	)
+	if err != nil {
+		return 0, err
+	}
+	if len(queryRes.Rows) == 0 {
+		return 0, nil
+	}
+	return int64FromValueDefault(queryRes.Rows[0]["max_id"]), nil
+}
+
 func (s *state) outboxCount(session string) (int64, error) {
 	queryRes, err := s.tc.SqlQuery(`SELECT COUNT(*) AS c FROM gateway__outbox WHERE session = ?`, session)
 	if err != nil {
@@ -514,6 +528,22 @@ func (s *state) pendingCount(session string) (int64, error) {
 		`SELECT COUNT(*) AS c
 		 FROM gateway__inbound
 		 WHERE session = ? AND status = 'pending'`,
+		session,
+	)
+	if err != nil {
+		return 0, err
+	}
+	if len(queryRes.Rows) == 0 {
+		return 0, nil
+	}
+	return int64FromValueDefault(queryRes.Rows[0]["c"]), nil
+}
+
+func (s *state) processingCount(session string) (int64, error) {
+	queryRes, err := s.tc.SqlQuery(
+		`SELECT COUNT(*) AS c
+		 FROM gateway__inbound
+		 WHERE session = ? AND status = 'processing'`,
 		session,
 	)
 	if err != nil {

@@ -3,6 +3,7 @@ package reliable
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -26,6 +27,15 @@ type JobCompleter[T any] struct {
 	Fail        func(ctx context.Context, job *ClaimedJob[T], now time.Time, cause error) error
 	ShouldRetry func(err error) bool
 	Backoff     func(attempt int) time.Duration
+	MaxAttempts int // 0 means no limit
+	Logger      *slog.Logger
+}
+
+func (c *JobCompleter[T]) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
 }
 
 func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
@@ -54,6 +64,7 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	log := c.logger()
 	now := time.Now().UTC()
 	job, err := c.ClaimDue(ctx, now)
 	if err != nil {
@@ -68,8 +79,10 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 		Attempt: job.Attempt,
 	}
 
+	log.Debug("job claimed", "job_id", job.ID, "attempt", job.Attempt)
+
 	if err := c.Handle(ctx, job); err != nil {
-		if c.ShouldRetry(err) {
+		if c.ShouldRetry(err) && (c.MaxAttempts <= 0 || job.Attempt < c.MaxAttempts) {
 			delay := time.Duration(0)
 			if c.Backoff != nil {
 				delay = c.Backoff(job.Attempt)
@@ -77,15 +90,33 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 			if delay < 0 {
 				delay = 0
 			}
+			log.Warn("job retry",
+				"job_id", job.ID,
+				"attempt", job.Attempt,
+				"delay", delay,
+				"error", err,
+			)
 			if retryErr := c.Retry(ctx, job, now, err, delay); retryErr != nil {
 				return outcome, retryErr
 			}
 			return outcome, nil
 		}
+		log.Error("job failed",
+			"job_id", job.ID,
+			"attempt", job.Attempt,
+			"error", err,
+		)
 		if failErr := c.Fail(ctx, job, now, err); failErr != nil {
 			return outcome, failErr
 		}
 		return outcome, nil
+	}
+
+	if job.Attempt > 1 {
+		log.Info("job completed after retries",
+			"job_id", job.ID,
+			"attempt", job.Attempt,
+		)
 	}
 
 	if err := c.Complete(ctx, job, now); err != nil {

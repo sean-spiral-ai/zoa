@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,14 +32,14 @@ type RawClientConfig struct {
 	AppToken   string
 	BotToken   string
 	HTTPClient *http.Client
-	Logger     *log.Logger
+	Logger     *slog.Logger
 }
 
 type rawClient struct {
 	appToken string
 	botToken string
 	http     *http.Client
-	logger   *log.Logger
+	logger   *slog.Logger
 }
 
 type socketEnvelope struct {
@@ -99,11 +99,16 @@ func NewRawClient(cfg RawClientConfig) (RawClient, error) {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &rawClient{
 		appToken: appToken,
 		botToken: botToken,
 		http:     httpClient,
-		logger:   cfg.Logger,
+		logger:   logger,
 	}, nil
 }
 
@@ -133,9 +138,7 @@ func (c *rawClient) RunSocketMode(ctx context.Context, onDM func(context.Context
 			continue
 		}
 		if envelope.Type == "hello" {
-			if c.logger != nil {
-				c.logger.Printf("socket connected")
-			}
+			c.logger.Info("socket connected")
 			continue
 		}
 		if strings.TrimSpace(envelope.EnvelopeID) != "" {

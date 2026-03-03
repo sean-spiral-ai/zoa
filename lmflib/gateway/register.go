@@ -22,5 +22,8 @@ func RegisterFunctions(registry *lmfrt.Registry) error {
 	if err := registry.Register(outboxSinceFunction()); err != nil {
 		return err
 	}
+	if err := registry.Register(outboxMaxIDFunction()); err != nil {
+		return err
+	}
 	return nil
 }

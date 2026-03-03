@@ -22,6 +22,7 @@ const (
 type GatewayClient interface {
 	Enqueue(message string) (EnqueueResult, error)
 	OutboxSince(lastID int64, limit int) ([]OutboxMessage, int64, error)
+	OutboxMaxID() (int64, error)
 	Session() string
 	Close() error
 }
@@ -200,6 +201,23 @@ func (c *localGatewayClient) OutboxSince(lastID int64, limit int) ([]OutboxMessa
 	}
 	messages, maxID := outboxMessagesFromRunOutput(snapshot.Output, lastID)
 	return messages, maxID, nil
+}
+
+// OutboxMaxID returns the current highest outbox ID for this session.
+// Used to establish an in-memory watermark at startup so we only deliver
+// new messages going forward.
+func (c *localGatewayClient) OutboxMaxID() (int64, error) {
+	if c == nil {
+		return 0, fmt.Errorf("gateway client is nil")
+	}
+	snapshot, err := runAndWait(c.taskManager, "gateway.outbox_max_id", map[string]any{
+		"session": c.session,
+	}, lmfrt.SpawnOptions{HideInLogByDefault: true})
+	if err != nil {
+		return 0, err
+	}
+	maxID, _ := int64Value(snapshot.Output["max_id"])
+	return maxID, nil
 }
 
 func runAndWait(taskManager *lmfrt.TaskManager, functionID string, input map[string]any, opts lmfrt.SpawnOptions) (lmfrt.TaskSnapshot, error) {

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -425,7 +425,7 @@ func (m *TaskManager) runPumpLoop(ctx context.Context, runner *pumpRunner) {
 
 	runOnce := func() {
 		if err := m.runPumpOnce(runner); err != nil {
-			fmt.Fprintf(os.Stderr, "pump %s run error: %v\n", runner.id, err)
+			slog.Error("pump run error", "pump", runner.id, "error", err)
 		}
 	}
 
@@ -469,7 +469,7 @@ func (m *TaskManager) newRecord(functionID string, input map[string]any, opts Sp
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nextID++
-	taskID := fmt.Sprintf("task-%06d", m.nextID)
+	taskID := fmt.Sprintf("task-%d", m.nextID)
 	now := time.Now().UTC()
 	rec := &taskRecord{
 		TaskSnapshot: TaskSnapshot{

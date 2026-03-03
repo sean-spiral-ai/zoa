@@ -433,7 +433,7 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	if _, _, err := manager1.Wait(firstID, 5*time.Second); err != nil {
 		t.Fatalf("wait first task: %v", err)
 	}
-	if firstID != "task-000001" {
+	if firstID != "task-1" {
 		t.Fatalf("unexpected first task id: %s", firstID)
 	}
 
@@ -444,7 +444,7 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	if _, _, err := manager1.Wait(secondID, 5*time.Second); err != nil {
 		t.Fatalf("wait second task: %v", err)
 	}
-	if secondID != "task-000002" {
+	if secondID != "task-2" {
 		t.Fatalf("unexpected second task id: %s", secondID)
 	}
 	if err := manager1.Close(); err != nil {
@@ -466,8 +466,8 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	if _, _, err := manager2.Wait(thirdID, 5*time.Second); err != nil {
 		t.Fatalf("wait third task: %v", err)
 	}
-	if thirdID != "task-000003" {
-		t.Fatalf("expected resumed task id task-000003, got %s", thirdID)
+	if thirdID != "task-3" {
+		t.Fatalf("expected resumed task id task-3, got %s", thirdID)
 	}
 }
 

@@ -2,14 +2,11 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +26,7 @@ type Config struct {
 	BotToken           string
 	OutboxPollInterval time.Duration
 	OutboxLimit        int
-	CursorPath         string
-	Logger             *log.Logger
+	Logger             *slog.Logger
 	RawClient          RawClient
 }
 
@@ -38,7 +34,7 @@ type Service struct {
 	cfg     Config
 	gateway gatewayclient.GatewayClient
 	slack   RawClient
-	logger  *log.Logger
+	logger  *slog.Logger
 	mu      sync.Mutex
 
 	boundDMID string
@@ -51,11 +47,17 @@ func NewService(cfg Config, gateway gatewayclient.GatewayClient) (*Service, erro
 	}
 	cfg.AppToken = strings.TrimSpace(cfg.AppToken)
 	cfg.BotToken = strings.TrimSpace(cfg.BotToken)
+
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	logger := cfg.Logger.With("component", "slack")
+
 	if cfg.RawClient == nil {
 		rawClient, err := NewRawClient(RawClientConfig{
 			AppToken: cfg.AppToken,
 			BotToken: cfg.BotToken,
-			Logger:   cfg.Logger,
+			Logger:   logger,
 		})
 		if err != nil {
 			return nil, err
@@ -69,15 +71,12 @@ func NewService(cfg Config, gateway gatewayclient.GatewayClient) (*Service, erro
 	if cfg.OutboxLimit <= 0 {
 		cfg.OutboxLimit = defaultOutboxLimit
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = log.New(os.Stderr, "slack: ", log.LstdFlags)
-	}
 
 	return &Service{
 		cfg:     cfg,
 		gateway: gateway,
 		slack:   cfg.RawClient,
-		logger:  cfg.Logger,
+		logger:  logger,
 		seen:    map[string]time.Time{},
 	}, nil
 }
@@ -87,9 +86,9 @@ func (s *Service) Run(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	lastOutboxID, err := loadCursor(s.cfg.CursorPath)
+	lastOutboxID, err := s.gateway.OutboxMaxID()
 	if err != nil {
-		return err
+		return fmt.Errorf("read outbox position: %w", err)
 	}
 
 	outboxCtx, outboxCancel := context.WithCancel(ctx)
@@ -103,7 +102,7 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		err := s.slack.RunSocketMode(ctx, func(cbCtx context.Context, event DMEvent) error {
 			if err := s.handleDMEvent(event); err != nil {
-				s.logger.Printf("event handling error: %v", err)
+				s.logger.Error("event handling error", "error", err)
 			}
 			return nil
 		})
@@ -111,10 +110,11 @@ func (s *Service) Run(ctx context.Context) error {
 			return nil
 		}
 		if err != nil {
-			s.logger.Printf("socket session ended: %v", err)
+			s.logger.Warn("socket session ended", "error", err)
 		}
 
 		sleep := withJitter(backoff, 0.25)
+		s.logger.Info("reconnecting", "delay", sleep)
 		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():
@@ -148,9 +148,15 @@ func (s *Service) handleDMEvent(event DMEvent) error {
 		return nil
 	}
 
-	if _, err := s.gateway.Enqueue(text); err != nil {
+	result, err := s.gateway.Enqueue(text)
+	if err != nil {
 		return err
 	}
+	s.logger.Info("message enqueued",
+		"inbound_id", result.InboundID,
+		"decision", result.Decision,
+		"queue_len", result.QueueLen,
+	)
 	return nil
 }
 
@@ -163,7 +169,7 @@ func (s *Service) bindChannel(channelID string) bool {
 	defer s.mu.Unlock()
 	if s.boundDMID == "" {
 		s.boundDMID = channelID
-		s.logger.Printf("bound to DM channel %s", channelID)
+		s.logger.Info("bound to DM channel", "channel", channelID)
 		return true
 	}
 	return s.boundDMID == channelID
@@ -216,23 +222,17 @@ func (s *Service) runOutboxLoop(ctx context.Context, initialLastID int64) {
 
 			messages, _, err := s.gateway.OutboxSince(lastID, s.cfg.OutboxLimit)
 			if err != nil {
-				s.logger.Printf("outbox poll error: %v", err)
+				s.logger.Error("outbox poll error", "error", err)
 				continue
 			}
 
-			deliveredID := lastID
 			for _, msg := range messages {
 				if err := s.sendWithRetry(ctx, boundChannel, msg.Text); err != nil {
-					s.logger.Printf("outbox delivery error (id=%d): %v", msg.ID, err)
+					s.logger.Error("outbox delivery error", "outbox_id", msg.ID, "error", err)
 					break
 				}
-				deliveredID = msg.ID
-			}
-			if deliveredID > lastID {
-				lastID = deliveredID
-				if err := saveCursor(s.cfg.CursorPath, lastID); err != nil {
-					s.logger.Printf("cursor save error: %v", err)
-				}
+				s.logger.Info("outbox delivered", "outbox_id", msg.ID, "channel", boundChannel)
+				lastID = msg.ID
 			}
 		}
 	}
@@ -259,54 +259,6 @@ func (s *Service) sendWithRetry(ctx context.Context, channelID, text string) err
 	case <-timer.C:
 	}
 	return s.slack.PostMessage(ctx, channelID, text)
-}
-
-type cursorState struct {
-	LastID int64 `json:"last_id"`
-}
-
-func loadCursor(path string) (int64, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return 0, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("read cursor file: %w", err)
-	}
-	var state cursorState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return 0, fmt.Errorf("decode cursor file: %w", err)
-	}
-	if state.LastID < 0 {
-		state.LastID = 0
-	}
-	return state.LastID, nil
-}
-
-func saveCursor(path string, lastID int64) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir cursor dir: %w", err)
-	}
-	data, err := json.Marshal(cursorState{LastID: lastID})
-	if err != nil {
-		return err
-	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return fmt.Errorf("write cursor temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename cursor file: %w", err)
-	}
-	return nil
 }
 
 func withJitter(base time.Duration, ratio float64) time.Duration {

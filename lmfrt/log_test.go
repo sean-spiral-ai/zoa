@@ -25,7 +25,7 @@ func TestTaskLogStateSanity(t *testing.T) {
 	now := time.Now().UTC()
 	running := TaskLogRecord{
 		TaskSnapshot: TaskSnapshot{
-			TaskID:     "task-000001",
+			TaskID:     "task-1",
 			FunctionID: "test.fn",
 			Status:     TaskStatusRunning,
 			CreatedAt:  now,
