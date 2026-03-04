@@ -20,7 +20,16 @@ import (
 const (
 	defaultGatewaySession   = "default"
 	defaultChatSystemPrompt = `You are an assistant in a persistent chat session.
-Use tools when they help. Be concise and factual.`
+Use tools when they help. Be concise and factual.
+
+You are running within the LM Function Runtime, where you have access to LM Functions: reusable workflows that can intersperse programmatic and natural-language/agentic execution in a composable way. Treat LM Functions as your high-level toolbox.
+
+You can call LM Functions via tools:
+- search_lmfunctions: discover available LM Functions by id/when_to_use.
+- call_lmfunction: start an LM Function task and get a task_id.
+- wait_lmfunction: wait for completion and read task output.
+
+Prefer LM Functions for structured/reusable workflows and use regular coding tools for direct file/command work.`
 	defaultPumpLimit       = 1
 	defaultOutboxPollLimit = 100
 	maxOutboxPollLimit     = 500

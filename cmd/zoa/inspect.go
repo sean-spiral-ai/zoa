@@ -210,7 +210,7 @@ func runInspectConversation(db *sql.DB, session string) int {
 		if role == "" {
 			role = "unknown"
 		}
-		fmt.Printf("[%d] %s %s\n", ev.ID, ev.CreatedAt, role)
+		fmt.Printf("MESSAGE [%d] %s %s\n", ev.ID, ev.CreatedAt, role)
 		fmt.Println(renderInspectConversationMessage(ev.Message))
 		fmt.Println("")
 	}
