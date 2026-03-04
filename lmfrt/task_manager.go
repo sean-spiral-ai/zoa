@@ -376,6 +376,7 @@ func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[s
 	tcOpts.registerPump = m.registerPump
 	tcOpts.spawnTask = m.Spawn
 	tcOpts.lmfTools = m.newLMFunctionTools
+	tcOpts.loadMixin = m.registry.GetMixin
 	taskCtx, err := NewTaskContext(ctx, tcOpts)
 	if err != nil {
 		return RunResult{}, err

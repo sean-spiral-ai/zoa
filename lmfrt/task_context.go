@@ -28,6 +28,7 @@ type TaskContextOptions struct {
 	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
 	lmfTools     func() ([]baselineagent.Tool, error)
+	loadMixin    func(id string) (*Mixin, bool)
 }
 
 type TaskContext struct {
@@ -41,6 +42,7 @@ type TaskContext struct {
 	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
 	lmfTools     func() ([]baselineagent.Tool, error)
+	loadMixin    func(id string) (*Mixin, bool)
 }
 
 type SqlExecResult struct {
@@ -122,6 +124,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		registerPump: opts.registerPump,
 		spawnTask:    opts.spawnTask,
 		lmfTools:     opts.lmfTools,
+		loadMixin:    opts.loadMixin,
 	}, nil
 }
 
@@ -266,6 +269,38 @@ func (t *TaskContext) NewLmFunctionTools() ([]baselineagent.Tool, error) {
 		return nil, fmt.Errorf("lmfunction tools are unavailable for this task context")
 	}
 	return t.lmfTools()
+}
+
+func (t *TaskContext) LoadMixin(id string) error {
+	if t == nil {
+		return fmt.Errorf("task context is nil")
+	}
+	if t.loadMixin == nil {
+		return fmt.Errorf("mixin loading is unavailable for this task context")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("mixin id cannot be empty")
+	}
+	mixin, ok := t.loadMixin(id)
+	if !ok || mixin == nil {
+		return fmt.Errorf("unknown mixin: %s", id)
+	}
+	if err := t.ensureMainConversation(); err != nil {
+		return err
+	}
+	if err := t.mainConv.AppendMessages([]baselineagent.ConversationMessage{
+		{
+			Role: baselineagent.RoleUser,
+			Text: strings.TrimSpace(mixin.Content),
+		},
+	}); err != nil {
+		return err
+	}
+	if t.logger != nil {
+		t.logger.Debug("appended mixin to conversation context", "mixin_id", mixin.ID)
+	}
+	return nil
 }
 
 func (t *TaskContext) requireSQL() (sqlExecutor, error) {

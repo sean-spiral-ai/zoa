@@ -23,11 +23,16 @@ const (
 Use tools when they help. Be concise and factual.
 
 You are running within the LM Function Runtime, where you have access to LM Functions: reusable workflows that can intersperse programmatic and natural-language/agentic execution in a composable way. Treat LM Functions as your high-level toolbox.
+You also have access to LM Mixins: reusable context snippets that can be appended to the context window.
 
 You can call LM Functions via tools:
 - search_lmfunctions: discover available LM Functions by id/when_to_use.
+- search_lmmixin: discover available LM context mixins by id/when_to_use.
+- load_lmmixin: load a mixin so its content is appended to future NL context.
 - call_lmfunction: start an LM Function task and get a task_id.
 - wait_lmfunction: wait for completion and read task output.
+
+If you feel missing context for a task, aggressively search for LM mixins and load relevant ones before proceeding.
 
 Prefer LM Functions for structured/reusable workflows and use regular coding tools for direct file/command work.`
 	defaultPumpLimit       = 1

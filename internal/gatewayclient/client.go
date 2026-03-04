@@ -104,8 +104,8 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	}
 
 	registry := lmfrt.NewRegistry()
-	if err := intrinsic.RegisterFunctions(registry); err != nil {
-		return nil, fmt.Errorf("register intrinsic functions: %w", err)
+	if err := intrinsic.RegisterMixins(registry); err != nil {
+		return nil, fmt.Errorf("register intrinsic mixins: %w", err)
 	}
 	if err := gatewaylmf.RegisterFunctions(registry); err != nil {
 		return nil, fmt.Errorf("register gateway functions: %w", err)

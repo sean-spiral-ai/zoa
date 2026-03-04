@@ -92,7 +92,7 @@ go test ./...
 
 - For Gemini, set `GEMINI_API_KEY`.
 - For Anthropic OAuth, set `ANTHROPIC_OAUTH_TOKEN`.
-- LLM-backed tests and intrinsic LM Functions require model credentials.
+- LLM-backed tests and intrinsic LM mixins/functions that rely on NL execution require model credentials.
 - There is no pre/post condition framework now; programmatic checks are regular Go errors in function bodies.
 - `ctx.NLCondition(...)` evaluates NL checks in an isolated fork of the task's baselineagent conversation.
 - `ctx.NLExec(...)` appends to one shared task conversation. Use `lmfrt.NLExecTyped[T](ctx, ...)` for typed JSON returns.
@@ -100,6 +100,9 @@ go test ./...
 - `NLExecTyped` requests JSON-only responses. Gemini uses `responseMimeType=application/json` + `responseSchema`; Claude uses native `output_config.format.type=json_schema`.
 - LMF now includes a task runtime (`TaskManager`) and model-callable tools:
   - `search_lmfunctions`
+  - `search_lmmixin`
+  - `load_lmmixin`
   - `call_lmfunction`
   - `wait_lmfunction`
-- `search_lmfunctions` uses literal text matching against function id/`when_to_use`; glob/wildcard patterns (for example `*`) are not supported.
+- `search_lmfunctions` requires `keywords` (array of strings). Keywords are matched literally (case-insensitive substring) against function id/`when_to_use`; any keyword may match.
+- `search_lmmixin` requires `keywords` (array of strings). Keywords are matched literally (case-insensitive substring) against mixin id/`when_to_use`; any keyword may match.

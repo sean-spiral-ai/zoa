@@ -23,3 +23,11 @@ type RunResult struct {
 	Output       map[string]any                      `json:"output,omitempty"`
 	Conversation []baselineagent.ConversationMessage `json:"-"`
 }
+
+type Mixin struct {
+	ID string
+	// WhenToUse is routing guidance for selecting this mixin.
+	WhenToUse string
+	// Content is the context text loaded into LMFunction NL execution instructions.
+	Content string
+}

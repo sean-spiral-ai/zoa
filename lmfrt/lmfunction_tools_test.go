@@ -30,8 +30,8 @@ func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
 
 	tool := &searchLMFunctionsTool{registry: registry}
 	out, err := tool.Execute(context.Background(), map[string]any{
-		"query": "schemas",
-		"limit": 10,
+		"keywords": []any{"schemas"},
+		"limit":    10,
 	})
 	if err != nil {
 		t.Fatalf("execute search_lmfunctions: %v", err)
@@ -59,5 +59,60 @@ func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
 	}
 	if match.OutputSchema == nil {
 		t.Fatalf("expected output_schema to be present")
+	}
+}
+
+func TestSearchLMMixinFindsRegisteredMixin(t *testing.T) {
+	registry := NewRegistry()
+	registry.MustRegisterMixin(&Mixin{
+		ID:        "intrinsic.lmfunction_system",
+		WhenToUse: "reference context",
+		Content:   "mixin text",
+	})
+
+	tool := &searchLMMixinsTool{registry: registry}
+	out, err := tool.Execute(context.Background(), map[string]any{
+		"keywords": []any{"does-not-match", "lmfunction"},
+		"limit":    10,
+	})
+	if err != nil {
+		t.Fatalf("execute search_lmmixin: %v", err)
+	}
+
+	var payload struct {
+		Matches []struct {
+			ID string `json:"id"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(payload.Matches))
+	}
+	if payload.Matches[0].ID != "intrinsic.lmfunction_system" {
+		t.Fatalf("unexpected match id: %q", payload.Matches[0].ID)
+	}
+}
+
+func TestLoadLMMixinLoadsIntoContext(t *testing.T) {
+	registry := NewRegistry()
+	registry.MustRegisterMixin(&Mixin{
+		ID:        "intrinsic.lmfunction_system",
+		WhenToUse: "reference context",
+		Content:   "mixin text",
+	})
+
+	tool := &loadLMMixinTool{
+		registry: registry,
+	}
+	out, err := tool.Execute(context.Background(), map[string]any{
+		"mixin_id": "intrinsic.lmfunction_system",
+	})
+	if err != nil {
+		t.Fatalf("execute load_lmmixin: %v", err)
+	}
+	if out != "mixin text" {
+		t.Fatalf("unexpected mixin output: %q", out)
 	}
 }

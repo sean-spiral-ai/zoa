@@ -27,6 +27,7 @@ type ConversationConfig struct {
 type Conversation interface {
 	Prompt(ctx context.Context, instruction string) (RunResult, error)
 	PromptStructured(ctx context.Context, instruction string, format StructuredResponseFormat) (RunResult, error)
+	AppendMessages(messages []ConversationMessage) error
 	Fork() Conversation
 	History() []ConversationMessage
 }
@@ -89,6 +90,13 @@ func (c *defaultConversation) Fork() Conversation {
 		session: c.session.Fork(),
 		timeout: c.timeout,
 	}
+}
+
+func (c *defaultConversation) AppendMessages(messages []ConversationMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	return c.session.AppendMessages(toLLMMessages(messages))
 }
 
 func (c *defaultConversation) History() []ConversationMessage {

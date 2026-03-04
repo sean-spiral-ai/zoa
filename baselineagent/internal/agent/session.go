@@ -302,6 +302,18 @@ func (s *Session) Messages() []llm.Message {
 	return cloneMessages(s.messages)
 }
 
+func (s *Session) AppendMessages(messages []llm.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	for _, msg := range messages {
+		if err := s.appendMessage(context.Background(), msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Session) logf(format string, args ...any) {
 	if s.verboseLog == nil {
 		return

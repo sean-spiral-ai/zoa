@@ -4,9 +4,9 @@ import "fmt"
 
 import lmfrt "zoa/lmfrt"
 
-func RegisterFunctions(registry *lmfrt.Registry) error {
+func RegisterMixins(registry *lmfrt.Registry) error {
 	if registry == nil {
 		return fmt.Errorf("registry is nil")
 	}
-	return registry.Register(intrinsicCreateLMFunction())
+	return registry.RegisterMixin(lmFunctionSystemMixin())
 }
