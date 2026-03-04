@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	builtintools "zoa/baselineagent/builtintools"
 	"zoa/baselineagent/internal/llm"
+	"zoa/internal/semtrace"
 )
 
 type SessionConfig struct {
@@ -43,6 +45,8 @@ type Session struct {
 	verboseLog  io.Writer
 	messages    []llm.Message
 }
+
+const toolArgsTracePreviewMax = 2000
 
 func NewSession(cfg SessionConfig) (*Session, error) {
 	if cfg.Client == nil {
@@ -84,19 +88,48 @@ func (s *Session) Prompt(ctx context.Context, userPrompt string) (RunResult, err
 }
 
 func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, options PromptOptions) (RunResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.TrimSpace(userPrompt) == "" {
 		return RunResult{}, fmt.Errorf("user prompt cannot be empty")
 	}
+	promptPreview := previewText(userPrompt, 1000)
+	ctx, promptRegion := semtrace.StartRegionWithAttrs(ctx, "baselineagent.prompt", map[string]any{
+		"model":          s.model,
+		"tools_disabled": options.DisableTools,
+		"prompt_len":     len(userPrompt),
+		"prompt_preview": promptPreview,
+	})
+	defer promptRegion.End()
+	semtrace.LogAttrs(ctx, "prompt", "prompt started", map[string]any{
+		"model":          s.model,
+		"tools_disabled": options.DisableTools,
+		"prompt_len":     len(userPrompt),
+		"prompt_preview": promptPreview,
+	})
 
 	s.messages = append(s.messages, llm.Message{Role: llm.RoleUser, Text: userPrompt})
 
 	for turn := 1; turn <= s.maxTurns; turn++ {
+		turnCtx, turnRegion := semtrace.StartRegionWithAttrs(ctx, fmt.Sprintf("baselineagent.turn.%d", turn), map[string]any{
+			"turn":          turn,
+			"message_count": len(s.messages),
+		})
+		semtrace.LogAttrs(turnCtx, "turn", "turn started", map[string]any{
+			"turn":          turn,
+			"message_count": len(s.messages),
+		})
 		toolSpecs := s.registry.Specs()
 		if options.DisableTools {
 			toolSpecs = nil
 		}
 
-		resp, err := s.client.Complete(ctx, llm.CompletionRequest{
+		llmCtx, llmRegion := semtrace.StartRegionWithAttrs(turnCtx, "llm.complete", map[string]any{
+			"turn":  turn,
+			"model": s.model,
+		})
+		resp, err := s.client.Complete(llmCtx, llm.CompletionRequest{
 			Model:            s.model,
 			Messages:         s.messages,
 			Tools:            toolSpecs,
@@ -104,9 +137,20 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			ResponseMimeType: options.ResponseMimeType,
 			ResponseSchema:   cloneMap(options.ResponseSchema),
 		})
+		llmRegion.End()
 		if err != nil {
+			semtrace.LogAttrs(llmCtx, "llm.error", err.Error(), map[string]any{
+				"turn":  turn,
+				"model": s.model,
+			})
+			turnRegion.End()
 			return RunResult{Turns: turn - 1, Messages: cloneMessages(s.messages)}, err
 		}
+		semtrace.LogAttrs(llmCtx, "llm.complete", "llm complete", map[string]any{
+			"turn":       turn,
+			"text_len":   len(resp.Text),
+			"tool_calls": len(resp.ToolCalls),
+		})
 
 		assistantMsg := llm.Message{
 			Role:      llm.RoleAssistant,
@@ -119,6 +163,7 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 		s.logf("turn %d assistant text:\n%s\n", turn, strings.TrimSpace(resp.Text))
 
 		if len(resp.ToolCalls) == 0 {
+			turnRegion.End()
 			return RunResult{
 				FinalResponse: strings.TrimSpace(resp.Text),
 				Turns:         turn,
@@ -128,6 +173,23 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 
 		toolResults := make([]llm.ToolResult, 0, len(resp.ToolCalls))
 		for _, call := range resp.ToolCalls {
+			argsPreview, argsLen, argsTruncated := previewJSON(call.Args, toolArgsTracePreviewMax)
+			toolCtx, toolRegion := semtrace.StartRegionWithAttrs(turnCtx, "tool."+call.Name, map[string]any{
+				"turn":           turn,
+				"call_id":        call.ID,
+				"tool":           call.Name,
+				"args_preview":   argsPreview,
+				"args_len":       argsLen,
+				"args_truncated": argsTruncated,
+			})
+			semtrace.LogAttrs(toolCtx, "tool.start", "tool call started", map[string]any{
+				"turn":           turn,
+				"call_id":        call.ID,
+				"tool":           call.Name,
+				"args_preview":   argsPreview,
+				"args_len":       argsLen,
+				"args_truncated": argsTruncated,
+			})
 			slog.Debug(
 				"tool call",
 				"component", "baselineagent_toolcall",
@@ -159,11 +221,17 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 				)
 				toolResults = append(toolResults, result)
 				s.logf("tool %s: unknown tool\n", call.Name)
+				semtrace.LogAttrs(toolCtx, "tool.error", "unknown tool", map[string]any{
+					"turn":    turn,
+					"call_id": call.ID,
+					"tool":    call.Name,
+				})
+				toolRegion.End()
 				continue
 			}
 
 			s.logf("tool %s args=%v\n", call.Name, call.Args)
-			output, execErr := t.Execute(ctx, call.Args)
+			output, execErr := t.Execute(toolCtx, call.Args)
 			toolResult := llm.ToolResult{
 				CallID:  call.ID,
 				Name:    call.Name,
@@ -172,6 +240,11 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			}
 			if execErr != nil {
 				toolResult.Output = execErr.Error()
+				semtrace.LogAttrs(toolCtx, "tool.error", execErr.Error(), map[string]any{
+					"turn":    turn,
+					"call_id": call.ID,
+					"tool":    call.Name,
+				})
 			}
 			slog.Debug(
 				"tool call",
@@ -186,8 +259,17 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			)
 			toolResults = append(toolResults, toolResult)
 			s.logf("tool %s result (error=%v):\n%s\n", call.Name, toolResult.IsError, toolResult.Output)
+			semtrace.LogAttrs(toolCtx, "tool.end", "tool call finished", map[string]any{
+				"turn":       turn,
+				"call_id":    call.ID,
+				"tool":       call.Name,
+				"error":      execErr != nil,
+				"output_len": len(toolResult.Output),
+			})
+			toolRegion.End()
 		}
 		s.messages = append(s.messages, llm.Message{Role: llm.RoleTool, ToolResults: cloneToolResults(toolResults)})
+		turnRegion.End()
 	}
 
 	return RunResult{Turns: s.maxTurns, Messages: cloneMessages(s.messages)}, fmt.Errorf("max turns (%d) reached before completion", s.maxTurns)
@@ -311,4 +393,20 @@ func previewText(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "...(truncated)"
+}
+
+func previewJSON(v any, maxLen int) (preview string, totalLen int, truncated bool) {
+	if maxLen <= 0 {
+		maxLen = 2000
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		fallback := fmt.Sprintf("%v", v)
+		return previewText(fallback, maxLen), len(fallback), len(fallback) > maxLen
+	}
+	s := string(raw)
+	if len(s) <= maxLen {
+		return s, len(s), false
+	}
+	return s[:maxLen] + "...(truncated)", len(s), true
 }

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/tracecontrol"
 	"zoa/lmflib"
 	lmfrt "zoa/lmfrt"
 	"zoa/reliable"
@@ -24,6 +26,7 @@ Use tools when they help. Be concise and factual.`
 	maxOutboxPollLimit     = 500
 	maxPumpLimit           = 200
 	inboundLeaseDuration   = 2 * time.Minute
+	defaultTraceControlURL = "http://127.0.0.1:3008"
 )
 
 func initFunction() *lmfrt.Function {
@@ -492,7 +495,11 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		return "", err
 	}
 
-	res, err := conv.Prompt(context.Background(), message)
+	promptCtx := tc.Context()
+	if promptCtx == nil {
+		promptCtx = context.Background()
+	}
+	res, err := conv.Prompt(promptCtx, message)
 	if err != nil {
 		return "", err
 	}
@@ -594,9 +601,44 @@ func renderSlashResponse(state *state, tc *lmfrt.TaskContext, session string, te
 			lines = append(lines, "- "+line)
 		}
 		return strings.Join(lines, "\n"), nil
+	case "/start_trace":
+		status, err := tracecontrol.StartTrace(resolveTraceControlURL())
+		if err != nil {
+			return fmt.Sprintf("Unable to start trace: %v", err), nil
+		}
+		return fmt.Sprintf("Runtime trace started.\nPath: %s\nStarted: %s\nWhen ready, run /end_trace.", status.TracePath, status.StartedAt.Format(time.RFC3339)), nil
+	case "/end_trace":
+		endResult, err := tracecontrol.DownloadTrace(resolveTraceControlURL())
+		if err != nil {
+			return fmt.Sprintf("Unable to end trace: %v", err), nil
+		}
+		outPath := filepath.Join(os.TempDir(), fmt.Sprintf("zoa-runtime-trace-%s.out", time.Now().UTC().Format("20060102T150405")))
+		if err := os.WriteFile(outPath, endResult.GoTrace, 0o600); err != nil {
+			return fmt.Sprintf("Trace ended but could not save output: %v", err), nil
+		}
+		semanticPath := strings.TrimSuffix(outPath, filepath.Ext(outPath)) + ".semantic.json"
+		semanticBytes, marshalErr := json.MarshalIndent(endResult.SemanticTrace, "", "  ")
+		if marshalErr == nil {
+			_ = os.WriteFile(semanticPath, semanticBytes, 0o600)
+		}
+		lines := []string{
+			fmt.Sprintf("Runtime trace saved to %s (%d bytes).", outPath, len(endResult.GoTrace)),
+			fmt.Sprintf("Semantic trace saved to %s (%d events).", semanticPath, len(endResult.SemanticTrace.Events)),
+			fmt.Sprintf("Source trace path: %s", endResult.Status.TracePath),
+			fmt.Sprintf("Convert/view: go tool trace %s", outPath),
+		}
+		return strings.Join(lines, "\n"), nil
 	default:
-		return "Unknown slash command. Available: /status /queue /log /tasks /outbox", nil
+		return "Unknown slash command. Available: /status /queue /log /tasks /outbox /start_trace /end_trace", nil
 	}
+}
+
+func resolveTraceControlURL() string {
+	raw := strings.TrimSpace(os.Getenv("ZOA_TRACE_CONTROL_URL"))
+	if raw != "" {
+		return strings.TrimRight(raw, "/")
+	}
+	return defaultTraceControlURL
 }
 
 func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool, includeHidden bool) ([]string, error) {

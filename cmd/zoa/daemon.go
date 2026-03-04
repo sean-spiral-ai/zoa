@@ -59,15 +59,18 @@ func daemonInstall(args []string) int {
 		pollMs            int
 		logLevel          string
 		debugLogComponent string
+		traceHTTPAddr     string
 	)
 
 	defaultCWD := "/"
 	defaultTimeout := 300
 	defaultPollMs := 400
 	defaultLogLevel := "info"
+	defaultTraceHTTPAddr := "127.0.0.1:3008"
 
 	fs.StringVar(&logLevel, "log-level", defaultLogLevel, "Log level (debug, info, warn, error)")
 	fs.StringVar(&debugLogComponent, "debug-log-component", "", "When set, only DEBUG logs with this component are emitted")
+	fs.StringVar(&traceHTTPAddr, "trace-http-addr", defaultTraceHTTPAddr, "runtime trace control HTTP listen address for zoa slack (empty to disable)")
 	fs.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	fs.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	fs.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
@@ -94,6 +97,7 @@ func daemonInstall(args []string) int {
 		PollMs:            pollMs,
 		LogLevel:          logLevel,
 		DebugLogComponent: debugLogComponent,
+		TraceHTTPAddr:     traceHTTPAddr,
 
 		DefaultModel:             baselineagent.DefaultModel,
 		DefaultMaxTurns:          baselineagent.DefaultMaxTurns,
@@ -104,6 +108,7 @@ func daemonInstall(args []string) int {
 		DefaultDebugLogComponent: "",
 		DefaultCWD:               defaultCWD,
 		DefaultSessionDir:        gatewayclient.DefaultSessionDir,
+		DefaultTraceHTTPAddr:     defaultTraceHTTPAddr,
 	}
 
 	if err := daemon.Install(cfg); err != nil {
@@ -159,5 +164,6 @@ func printDaemonUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Install flags (same as 'zoa slack'):")
 	fmt.Fprintln(os.Stderr, "  --cwd, --model, --max-turns, --temperature,")
-	fmt.Fprintln(os.Stderr, "  --timeout, --poll-ms, --session-dir, --log-level, --debug-log-component")
+	fmt.Fprintln(os.Stderr, "  --timeout, --poll-ms, --session-dir, --log-level, --debug-log-component,")
+	fmt.Fprintln(os.Stderr, "  --trace-http-addr")
 }

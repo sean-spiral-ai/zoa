@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"zoa/internal/semtrace"
 )
 
 const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -74,8 +76,16 @@ type geminiFunctionResponse struct {
 }
 
 type geminiGenerateResponse struct {
-	Candidates []geminiCandidate `json:"candidates"`
-	Error      *geminiAPIError   `json:"error,omitempty"`
+	Candidates    []geminiCandidate    `json:"candidates"`
+	UsageMetadata *geminiUsageMetadata `json:"usageMetadata,omitempty"`
+	Error         *geminiAPIError      `json:"error,omitempty"`
+}
+
+type geminiUsageMetadata struct {
+	PromptTokenCount        int `json:"promptTokenCount,omitempty"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount,omitempty"`
+	TotalTokenCount         int `json:"totalTokenCount,omitempty"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
 }
 
 type geminiCandidate struct {
@@ -89,6 +99,23 @@ type geminiAPIError struct {
 }
 
 func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	model := normalizeModel(req.Model)
+	ctx, traceRegion := semtrace.StartRegionWithAttrs(ctx, "llm.gemini.complete", map[string]any{
+		"provider": "gemini",
+		"model":    model,
+	})
+	endAttrs := map[string]any{}
+	defer func() { traceRegion.EndWithAttrs(endAttrs) }()
+	semtrace.LogAttrs(ctx, "llm", "gemini request", map[string]any{
+		"provider": "gemini",
+		"model":    model,
+		"messages": len(req.Messages),
+		"tools":    len(req.Tools),
+	})
+
 	if len(req.Messages) == 0 {
 		return CompletionResponse{}, errors.New("at least one message is required")
 	}
@@ -130,7 +157,6 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 		return CompletionResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	model := normalizeModel(req.Model)
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", c.baseURL, model, c.apiKey)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -140,6 +166,10 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		semtrace.LogAttrs(ctx, "llm.error", err.Error(), map[string]any{
+			"provider": "gemini",
+			"model":    model,
+		})
 		return CompletionResponse{}, fmt.Errorf("gemini request failed: %w", err)
 	}
 	defer httpResp.Body.Close()
@@ -154,6 +184,11 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error != nil {
 			return CompletionResponse{}, fmt.Errorf("gemini error %d (%s): %s", apiErr.Error.Code, apiErr.Error.Status, apiErr.Error.Message)
 		}
+		semtrace.LogAttrs(ctx, "llm.error", "gemini non-2xx", map[string]any{
+			"provider": "gemini",
+			"model":    model,
+			"status":   httpResp.StatusCode,
+		})
 		return CompletionResponse{}, fmt.Errorf("gemini HTTP %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
@@ -198,6 +233,18 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 				ThoughtSignature: p.ThoughtSignature,
 			})
 		}
+	}
+	semtrace.LogAttrs(ctx, "llm", "gemini response", map[string]any{
+		"provider":   "gemini",
+		"model":      model,
+		"text_len":   len(resp.Text),
+		"tool_calls": len(resp.ToolCalls),
+	})
+	if parsed.UsageMetadata != nil {
+		endAttrs["tokens.input"] = parsed.UsageMetadata.PromptTokenCount
+		endAttrs["tokens.output"] = parsed.UsageMetadata.CandidatesTokenCount
+		endAttrs["tokens.total"] = parsed.UsageMetadata.TotalTokenCount
+		endAttrs["tokens.cache_read_input"] = parsed.UsageMetadata.CachedContentTokenCount
 	}
 
 	return resp, nil

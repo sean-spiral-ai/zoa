@@ -24,13 +24,14 @@ func runSlack(args []string) int {
 	slackFlags.SetOutput(os.Stderr)
 
 	var (
-		cwd         string
-		sessionDir  string
-		model       string
-		maxTurns    int
-		temperature float64
-		timeoutSec  int
-		pollMs      int
+		cwd           string
+		sessionDir    string
+		model         string
+		maxTurns      int
+		temperature   float64
+		timeoutSec    int
+		pollMs        int
+		traceHTTPAddr string
 
 		appTokenFlag      string
 		botTokenFlag      string
@@ -47,6 +48,7 @@ func runSlack(args []string) int {
 	slackFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
 	slackFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
+	slackFlags.StringVar(&traceHTTPAddr, "trace-http-addr", "127.0.0.1:3008", "runtime trace control HTTP listen address (empty to disable)")
 
 	slackFlags.StringVar(&appTokenFlag, "slack-app-token", "", "Slack app token (xapp-..., default: SLACK_APP_TOKEN)")
 	slackFlags.StringVar(&botTokenFlag, "slack-bot-token", "", "Slack bot token (xoxb-..., default: SLACK_BOT_TOKEN)")
@@ -73,6 +75,21 @@ func runSlack(args []string) int {
 		handler = newDebugComponentFilterHandler(handler, slogLevel, strings.TrimSpace(debugLogComponent))
 	}
 	slog.SetDefault(slog.New(handler))
+	traceServer, traceBaseURL, err := startRuntimeTraceControlServer(traceHTTPAddr, slog.Default())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: start runtime trace control server: %v\n", err)
+	} else if traceServer != nil {
+		if setErr := os.Setenv("ZOA_TRACE_CONTROL_URL", traceBaseURL); setErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: set ZOA_TRACE_CONTROL_URL: %v\n", setErr)
+		} else {
+			slog.Info("runtime trace control enabled", "base_url", traceBaseURL)
+		}
+		defer func() {
+			if stopErr := stopRuntimeTraceControlServer(traceServer); stopErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: stop runtime trace control server: %v\n", stopErr)
+			}
+		}()
+	}
 
 	if err := keys.LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: loading .env: %v\n", err)

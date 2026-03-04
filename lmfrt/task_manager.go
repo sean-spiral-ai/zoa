@@ -12,6 +12,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/semtrace"
 )
 
 type TaskStatus string
@@ -279,8 +280,32 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	m.mu.Unlock()
 	_ = m.persistTask(taskID)
 
+	runCtx := m.baseCtx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	runCtx, task := semtrace.NewTaskWithAttrs(runCtx, "TaskManager.runTask", map[string]any{
+		"task_id":                  taskID,
+		"function_id":              functionID,
+		"hide_by_default":          rec.spawnOptions.HideInLogByDefault,
+		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
+	})
+	defer task.End()
+	semtrace.LogAttrs(runCtx, "lmfunction", "task started", map[string]any{
+		"task_id":                  taskID,
+		"function_id":              functionID,
+		"hide_by_default":          rec.spawnOptions.HideInLogByDefault,
+		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
+	})
+
 	m.logger.Debug("task started", "task_id", taskID, "function_id", functionID)
-	res, err := m.runFunction(fn, input)
+	execCtx, execRegion := semtrace.StartRegionWithAttrs(runCtx, "lmfunction.run", map[string]any{
+		"task_id":                  taskID,
+		"function_id":              functionID,
+		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
+	})
+	res, err := m.runFunction(execCtx, fn, input)
+	execRegion.End()
 
 	end := time.Now().UTC()
 	m.mu.Lock()
@@ -297,6 +322,20 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	done := rec.done
 	m.mu.Unlock()
 	_ = m.persistTask(taskID)
+	if err != nil {
+		semtrace.LogAttrs(runCtx, "lmfunction.error", err.Error(), map[string]any{
+			"task_id":     taskID,
+			"function_id": functionID,
+		})
+	}
+	semtrace.LogAttrs(runCtx, "lmfunction", "task finished", map[string]any{
+		"task_id":                  taskID,
+		"function_id":              functionID,
+		"status":                   string(status),
+		"duration_ms":              end.Sub(now).Milliseconds(),
+		"conversation_messages":    len(res.Conversation),
+		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
+	})
 
 	m.logger.Debug("task finished", "task_id", taskID, "function_id", functionID, "status", status, "duration", end.Sub(now))
 	close(done)
@@ -316,7 +355,10 @@ func (m *TaskManager) resolveFunctionInput(functionID string, input map[string]a
 	return fn, cloneMapAny(input), nil
 }
 
-func (m *TaskManager) runFunction(fn *Function, input map[string]any) (RunResult, error) {
+func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[string]any) (RunResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if fn == nil {
 		return RunResult{}, fmt.Errorf("function is nil")
 	}
@@ -334,7 +376,7 @@ func (m *TaskManager) runFunction(fn *Function, input map[string]any) (RunResult
 	tcOpts.registerPump = m.registerPump
 	tcOpts.spawnTask = m.Spawn
 	tcOpts.lmfTools = m.newLMFunctionTools
-	taskCtx, err := NewTaskContext(m.baseCtx, tcOpts)
+	taskCtx, err := NewTaskContext(ctx, tcOpts)
 	if err != nil {
 		return RunResult{}, err
 	}

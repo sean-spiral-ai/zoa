@@ -25,6 +25,8 @@ func run(args []string) int {
 		return runTUI(args[1:])
 	case "slack":
 		return runSlack(args[1:])
+	case "trace":
+		return runTrace(args[1:])
 	case "inspect":
 		return runInspect(args[1:])
 	case "daemon":
@@ -40,12 +42,14 @@ func printUsage(out *os.File) {
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  zoa tui [flags]")
 	fmt.Fprintln(out, "  zoa slack [flags]")
+	fmt.Fprintln(out, "  zoa trace [flags]")
 	fmt.Fprintln(out, "  zoa inspect [flags] [sql]")
 	fmt.Fprintln(out, "  zoa daemon <action> [flags]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Subcommands:")
 	fmt.Fprintln(out, "  tui      Run the interactive gateway loop")
 	fmt.Fprintln(out, "  slack    Connect the gateway loop to Slack Socket Mode DMs")
+	fmt.Fprintln(out, "  trace    Capture runtime trace, export Perfetto JSON, serve via trace_processor")
 	fmt.Fprintln(out, "  inspect  Inspect SQLite stats or run an explicit SQL query")
 	fmt.Fprintln(out, "  daemon   Manage the systemd user service")
 }

@@ -25,6 +25,7 @@ type InstallConfig struct {
 	PollMs            int     // --poll-ms
 	LogLevel          string  // --log-level
 	DebugLogComponent string  // --debug-log-component
+	TraceHTTPAddr     string  // --trace-http-addr for runtime trace control
 
 	// Defaults used to suppress flags that match.
 	DefaultModel             string
@@ -36,6 +37,7 @@ type InstallConfig struct {
 	DefaultDebugLogComponent string
 	DefaultCWD               string
 	DefaultSessionDir        string
+	DefaultTraceHTTPAddr     string
 }
 
 // Action represents a systemctl lifecycle verb.
@@ -289,6 +291,7 @@ func buildSlackFlags(cfg InstallConfig) string {
 	add("--cwd", cfg.CWD, cfg.DefaultCWD)
 	add("--session-dir", cfg.SessionDir, cfg.DefaultSessionDir)
 	add("--model", cfg.Model, cfg.DefaultModel)
+	add("--trace-http-addr", cfg.TraceHTTPAddr, cfg.DefaultTraceHTTPAddr)
 	addInt("--max-turns", cfg.MaxTurns, cfg.DefaultMaxTurns)
 	addFloat("--temperature", cfg.Temperature, cfg.DefaultTemperature)
 	addInt("--timeout", cfg.TimeoutSec, cfg.DefaultTimeoutSec)
