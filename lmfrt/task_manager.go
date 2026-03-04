@@ -12,6 +12,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/llmtrace"
 	"zoa/internal/semtrace"
 )
 
@@ -49,6 +50,9 @@ type TaskManagerOptions struct {
 
 	// Logger is an optional structured logger. Defaults to slog.Default().
 	Logger *slog.Logger
+
+	// LLMTraceStore, when set, enables content-addressable LLM conversation tracing.
+	LLMTraceStore *llmtrace.Store
 }
 
 type SpawnOptions struct {
@@ -378,6 +382,7 @@ func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[s
 	tcOpts.lmfTools = m.newLMFunctionTools
 	tcOpts.loadMixin = m.registry.GetMixin
 	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
+	tcOpts.llmtraceStore = m.opts.LLMTraceStore
 	if fn.AssetsDir != "" {
 		tcOpts.AssetsDir = fn.AssetsDir
 	}

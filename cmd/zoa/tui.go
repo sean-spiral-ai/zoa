@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
+	"zoa/internal/llmtrace"
 )
 
 func runTUI(args []string) int {
@@ -22,13 +24,14 @@ func runTUI(args []string) int {
 	tuiFlags.SetOutput(os.Stderr)
 
 	var (
-		cwd         string
-		sessionDir  string
-		model       string
-		maxTurns    int
-		temperature float64
-		timeoutSec  int
-		pollMs      int
+		cwd            string
+		sessionDir     string
+		model          string
+		maxTurns       int
+		temperature    float64
+		timeoutSec     int
+		pollMs         int
+		llmtraceAddr   string
 	)
 
 	tuiFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
@@ -38,6 +41,7 @@ func runTUI(args []string) int {
 	tuiFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
 	tuiFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
 	tuiFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
+	tuiFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
 
 	if err := tuiFlags.Parse(args); err != nil {
 		return 2
@@ -74,14 +78,34 @@ func runTUI(args []string) int {
 		)
 	}
 
+	var traceStore *llmtrace.Store
+	if llmtraceAddr != "" {
+		dbPath := filepath.Join(sessionDir, "llmtrace.db")
+		var storeErr error
+		traceStore, storeErr = llmtrace.NewStore(dbPath)
+		if storeErr != nil {
+			fmt.Fprintf(os.Stderr, "error creating llmtrace store: %v\n", storeErr)
+			return 1
+		}
+		defer traceStore.Close()
+		srv, _, srvErr := llmtrace.StartServer(llmtraceAddr, traceStore)
+		if srvErr != nil {
+			fmt.Fprintf(os.Stderr, "error starting llmtrace server: %v\n", srvErr)
+			return 1
+		}
+		defer srv.Close()
+		fmt.Fprintf(os.Stderr, "llmtrace server listening on %s\n", llmtraceAddr)
+	}
+
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:     gatewayclient.DefaultSession,
-		SessionDir:  sessionDir,
-		CWD:         cwd,
-		Model:       model,
-		MaxTurns:    maxTurns,
-		Temperature: temperature,
-		TimeoutSec:  timeoutSec,
+		Session:       gatewayclient.DefaultSession,
+		SessionDir:    sessionDir,
+		CWD:           cwd,
+		Model:         model,
+		MaxTurns:      maxTurns,
+		Temperature:   temperature,
+		TimeoutSec:    timeoutSec,
+		LLMTraceStore: traceStore,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing gateway client: %v\n", err)

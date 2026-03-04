@@ -54,4 +54,7 @@ func printUsage(out *os.File) {
 	fmt.Fprintln(out, "  trace    Capture runtime trace, export Perfetto JSON, serve via trace_processor")
 	fmt.Fprintln(out, "  inspect  Inspect SQLite stats, run SQL, or dump conversation history")
 	fmt.Fprintln(out, "  daemon   Manage the systemd user service")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "LLM Trace:")
+	fmt.Fprintln(out, "  Pass --llmtrace-addr :3009 to tui or slack to enable the LLM conversation tree viewer")
 }

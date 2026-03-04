@@ -9,6 +9,7 @@ import (
 
 	"zoa/baselineagent/internal/agent"
 	"zoa/baselineagent/internal/llm"
+	"zoa/internal/llmtrace"
 )
 
 type ConversationConfig struct {
@@ -21,7 +22,7 @@ type ConversationConfig struct {
 	SystemPrompt    string
 	Tools           []Tool
 	InitialMessages []ConversationMessage
-	OnMessage       func(context.Context, ConversationMessage) error
+	Tracer          llmtrace.MessageTracer
 }
 
 type Conversation interface {
@@ -96,7 +97,8 @@ func (c *defaultConversation) AppendMessages(messages []ConversationMessage) err
 	if len(messages) == 0 {
 		return nil
 	}
-	return c.session.AppendMessages(toLLMMessages(messages))
+	c.session.AppendMessages(toLLMMessages(messages))
+	return nil
 }
 
 func (c *defaultConversation) History() []ConversationMessage {
@@ -154,12 +156,7 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		SystemPrompt:    systemPrompt,
 		VerboseLog:      cfg.VerboseLog,
 		InitialMessages: toLLMMessages(cfg.InitialMessages),
-		OnMessage: func(ctx context.Context, message llm.Message) error {
-			if cfg.OnMessage == nil {
-				return nil
-			}
-			return cfg.OnMessage(ctx, fromLLMMessages([]llm.Message{message})[0])
-		},
+		Tracer:          cfg.Tracer,
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("create session: %w", err)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/llmtrace"
 )
 
 type TaskContextOptions struct {
@@ -25,30 +26,32 @@ type TaskContextOptions struct {
 	Namespace   string
 	AssetsDir   string
 
-	logger       *slog.Logger
-	sqlDB        sqlExecutor
-	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools     func() ([]baselineagent.Tool, error)
-	loadMixin    func(id string) (*Mixin, bool)
+	logger         *slog.Logger
+	sqlDB          sqlExecutor
+	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools       func() ([]baselineagent.Tool, error)
+	loadMixin      func(id string) (*Mixin, bool)
+	llmtraceStore  *llmtrace.Store
 }
 
 type TaskContext struct {
-	ctx          context.Context
-	logger       *slog.Logger
-	apiKey       string
-	baseConfig   baselineagent.ConversationConfig
-	mainConv     baselineagent.Conversation
-	sqlDB        sqlExecutor
-	ownsSQL      bool
-	namespace    string
-	sqlitePath   string
-	assetsDir    string
-	tmpDirs      []string
-	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools     func() ([]baselineagent.Tool, error)
-	loadMixin    func(id string) (*Mixin, bool)
+	ctx            context.Context
+	logger         *slog.Logger
+	apiKey         string
+	baseConfig     baselineagent.ConversationConfig
+	mainConv       baselineagent.Conversation
+	sqlDB          sqlExecutor
+	ownsSQL        bool
+	namespace      string
+	sqlitePath     string
+	assetsDir      string
+	tmpDirs        []string
+	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools       func() ([]baselineagent.Tool, error)
+	loadMixin      func(id string) (*Mixin, bool)
+	llmtraceStore  *llmtrace.Store
 }
 
 type SqlExecResult struct {
@@ -120,20 +123,21 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	tcLogger = tcLogger.With("component", "task_context")
 
 	return &TaskContext{
-		ctx:          ctx,
-		logger:       tcLogger,
-		apiKey:       apiKey,
-		baseConfig:   baseConfig,
-		mainConv:     nil,
-		sqlDB:        sqlDB,
-		ownsSQL:      ownsSQL,
-		namespace:    opts.Namespace,
-		sqlitePath:   opts.SQLitePath,
-		assetsDir:    opts.AssetsDir,
-		registerPump: opts.registerPump,
-		spawnTask:    opts.spawnTask,
-		lmfTools:     opts.lmfTools,
-		loadMixin:    opts.loadMixin,
+		ctx:           ctx,
+		logger:        tcLogger,
+		apiKey:        apiKey,
+		baseConfig:    baseConfig,
+		mainConv:      nil,
+		sqlDB:         sqlDB,
+		ownsSQL:       ownsSQL,
+		namespace:     opts.Namespace,
+		sqlitePath:    opts.SQLitePath,
+		assetsDir:     opts.AssetsDir,
+		registerPump:  opts.registerPump,
+		spawnTask:     opts.spawnTask,
+		lmfTools:      opts.lmfTools,
+		loadMixin:     opts.loadMixin,
+		llmtraceStore: opts.llmtraceStore,
 	}, nil
 }
 
@@ -185,6 +189,11 @@ func (t *TaskContext) GetAssetsDir() (string, error) {
 		return "", fmt.Errorf("assets dir is not configured for this task context")
 	}
 	return t.assetsDir, nil
+}
+
+// LLMTraceStore returns the llmtrace store, or nil if not configured.
+func (t *TaskContext) LLMTraceStore() *llmtrace.Store {
+	return t.llmtraceStore
 }
 
 func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) {
@@ -475,6 +484,9 @@ func (t *TaskContext) ensureMainConversation() error {
 		toolset = append(toolset, cfg.Tools...)
 		toolset = append(toolset, lmfTools...)
 		cfg.Tools = toolset
+	}
+	if t.llmtraceStore != nil {
+		cfg.Tracer = llmtrace.NewTracer(t.llmtraceStore)
 	}
 	conv, err := baselineagent.NewConversation(apiKey, cfg)
 	if err != nil {

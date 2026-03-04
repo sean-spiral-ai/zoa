@@ -6,6 +6,7 @@ import (
 
 	builtintools "zoa/baselineagent/builtintools"
 	"zoa/baselineagent/internal/llm"
+	"zoa/internal/llmtrace"
 )
 
 type testLLMClient struct {
@@ -33,7 +34,7 @@ func (echoTool) Execute(_ context.Context, args map[string]any) (string, error) 
 	return "ok", nil
 }
 
-func TestPromptWithOptions_OnMessageReceivesUserAssistantToolIncrementally(t *testing.T) {
+func TestTracerReceivesMessagesIncrementally(t *testing.T) {
 	client := &testLLMClient{
 		complete: func(_ context.Context, req llm.CompletionRequest) (llm.CompletionResponse, error) {
 			switch len(req.Messages) {
@@ -63,17 +64,19 @@ func TestPromptWithOptions_OnMessageReceivesUserAssistantToolIncrementally(t *te
 		},
 	}
 
-	seen := []llm.Message{}
+	store, err := llmtrace.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
 	session, err := NewSession(SessionConfig{
 		Client:       client,
 		Model:        "test-model",
 		Tools:        []builtintools.Tool{echoTool{}},
 		MaxTurns:     3,
 		SystemPrompt: "sys",
-		OnMessage: func(_ context.Context, msg llm.Message) error {
-			seen = append(seen, msg)
-			return nil
-		},
+		Tracer:       llmtrace.NewTracer(store),
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -87,19 +90,19 @@ func TestPromptWithOptions_OnMessageReceivesUserAssistantToolIncrementally(t *te
 		t.Fatalf("unexpected final response: %q", res.FinalResponse)
 	}
 
-	if len(seen) != 4 {
-		t.Fatalf("expected 4 callback messages (user, assistant(tool_call), tool_result, assistant), got %d", len(seen))
+	// root + system + user + assistant(tool) + tool_result + assistant(done) = 6
+	nodes, err := store.AllNodes()
+	if err != nil {
+		t.Fatalf("AllNodes: %v", err)
 	}
-	if seen[0].Role != llm.RoleUser {
-		t.Fatalf("callback[0] role = %s, want user", seen[0].Role)
+	if len(nodes) != 6 {
+		t.Fatalf("expected 6 nodes, got %d", len(nodes))
 	}
-	if seen[1].Role != llm.RoleAssistant {
-		t.Fatalf("callback[1] role = %s, want assistant", seen[1].Role)
-	}
-	if seen[2].Role != llm.RoleTool {
-		t.Fatalf("callback[2] role = %s, want tool", seen[2].Role)
-	}
-	if seen[3].Role != llm.RoleAssistant {
-		t.Fatalf("callback[3] role = %s, want assistant", seen[3].Role)
+
+	// Verify linear chain.
+	for i := 1; i < len(nodes); i++ {
+		if nodes[i].ParentHash != nodes[i-1].Hash {
+			t.Errorf("node[%d].parent != node[%d].hash", i, i-1)
+		}
 	}
 }

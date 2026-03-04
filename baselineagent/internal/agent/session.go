@@ -10,6 +10,7 @@ import (
 
 	builtintools "zoa/baselineagent/builtintools"
 	"zoa/baselineagent/internal/llm"
+	"zoa/internal/llmtrace"
 	"zoa/internal/semtrace"
 )
 
@@ -22,7 +23,7 @@ type SessionConfig struct {
 	SystemPrompt    string
 	VerboseLog      io.Writer
 	InitialMessages []llm.Message
-	OnMessage       func(context.Context, llm.Message) error
+	Tracer          llmtrace.MessageTracer
 }
 
 type RunResult struct {
@@ -45,7 +46,7 @@ type Session struct {
 	maxTurns    int
 	verboseLog  io.Writer
 	messages    []llm.Message
-	onMessage   func(context.Context, llm.Message) error
+	tracer      llmtrace.MessageTracer
 }
 
 const toolArgsTracePreviewMax = 2000
@@ -74,6 +75,14 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		}
 	}
 
+	// Replay initial messages through the tracer so its head advances to the
+	// correct position. Inserts are idempotent (INSERT OR IGNORE).
+	if cfg.Tracer != nil {
+		for _, msg := range initialMessages {
+			_ = cfg.Tracer.OnMessage(cloneMessage(msg), map[string]any{"model": cfg.Model})
+		}
+	}
+
 	return &Session{
 		client:      cfg.Client,
 		model:       cfg.Model,
@@ -82,7 +91,7 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		maxTurns:    cfg.MaxTurns,
 		verboseLog:  cfg.VerboseLog,
 		messages:    initialMessages,
-		onMessage:   cfg.OnMessage,
+		tracer:      cfg.Tracer,
 	}, nil
 }
 
@@ -112,9 +121,7 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 		"prompt_preview": promptPreview,
 	})
 
-	if err := s.appendMessage(ctx, llm.Message{Role: llm.RoleUser, Text: userPrompt}); err != nil {
-		return RunResult{}, err
-	}
+	s.appendMessage(ctx, llm.Message{Role: llm.RoleUser, Text: userPrompt})
 
 	for turn := 1; turn <= s.maxTurns; turn++ {
 		turnCtx, turnRegion := semtrace.StartRegionWithAttrs(ctx, fmt.Sprintf("baselineagent.turn.%d", turn), map[string]any{
@@ -163,10 +170,7 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			Parts:     cloneAssistantParts(resp.Parts),
 			ToolCalls: cloneToolCalls(resp.ToolCalls),
 		}
-		if err := s.appendMessage(turnCtx, assistantMsg); err != nil {
-			turnRegion.End()
-			return RunResult{Turns: turn - 1, Messages: cloneMessages(s.messages)}, err
-		}
+		s.appendMessage(turnCtx, assistantMsg)
 
 		s.logf("turn %d assistant text:\n%s\n", turn, strings.TrimSpace(resp.Text))
 
@@ -276,10 +280,7 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			})
 			toolRegion.End()
 		}
-		if err := s.appendMessage(turnCtx, llm.Message{Role: llm.RoleTool, ToolResults: cloneToolResults(toolResults)}); err != nil {
-			turnRegion.End()
-			return RunResult{Turns: turn - 1, Messages: cloneMessages(s.messages)}, err
-		}
+		s.appendMessage(turnCtx, llm.Message{Role: llm.RoleTool, ToolResults: cloneToolResults(toolResults)})
 		turnRegion.End()
 	}
 
@@ -295,6 +296,9 @@ func (s *Session) Run(ctx context.Context, userPrompt string) (RunResult, error)
 func (s *Session) Fork() *Session {
 	cloned := *s
 	cloned.messages = cloneMessages(s.messages)
+	if s.tracer != nil {
+		cloned.tracer = s.tracer.Fork()
+	}
 	return &cloned
 }
 
@@ -302,16 +306,10 @@ func (s *Session) Messages() []llm.Message {
 	return cloneMessages(s.messages)
 }
 
-func (s *Session) AppendMessages(messages []llm.Message) error {
-	if len(messages) == 0 {
-		return nil
-	}
+func (s *Session) AppendMessages(messages []llm.Message) {
 	for _, msg := range messages {
-		if err := s.appendMessage(context.Background(), msg); err != nil {
-			return err
-		}
+		s.appendMessage(context.Background(), msg)
 	}
-	return nil
 }
 
 func (s *Session) logf(format string, args ...any) {
@@ -321,18 +319,12 @@ func (s *Session) logf(format string, args ...any) {
 	fmt.Fprintf(s.verboseLog, format, args...)
 }
 
-func (s *Session) appendMessage(ctx context.Context, msg llm.Message) error {
+func (s *Session) appendMessage(_ context.Context, msg llm.Message) {
 	cloned := cloneMessage(msg)
-	if s.onMessage != nil {
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		if err := s.onMessage(ctx, cloneMessage(cloned)); err != nil {
-			return err
-		}
+	if s.tracer != nil {
+		_ = s.tracer.OnMessage(cloneMessage(cloned), map[string]any{"model": s.model})
 	}
 	s.messages = append(s.messages, cloned)
-	return nil
 }
 
 func cloneMessage(m llm.Message) llm.Message {

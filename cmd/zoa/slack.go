@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -14,6 +15,7 @@ import (
 	baselineagent "zoa/baselineagent"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
+	"zoa/internal/llmtrace"
 	slackbridge "zoa/internal/slack"
 )
 
@@ -32,6 +34,7 @@ func runSlack(args []string) int {
 		timeoutSec    int
 		pollMs        int
 		traceHTTPAddr string
+		llmtraceAddr  string
 
 		appTokenFlag      string
 		botTokenFlag      string
@@ -49,6 +52,7 @@ func runSlack(args []string) int {
 	slackFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	slackFlags.StringVar(&traceHTTPAddr, "trace-http-addr", "127.0.0.1:3008", "runtime trace control HTTP listen address (empty to disable)")
+	slackFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
 
 	slackFlags.StringVar(&appTokenFlag, "slack-app-token", "", "Slack app token (xapp-..., default: SLACK_APP_TOKEN)")
 	slackFlags.StringVar(&botTokenFlag, "slack-bot-token", "", "Slack bot token (xoxb-..., default: SLACK_BOT_TOKEN)")
@@ -129,14 +133,34 @@ func runSlack(args []string) int {
 		return 1
 	}
 
+	var traceStore *llmtrace.Store
+	if llmtraceAddr != "" {
+		dbPath := filepath.Join(sessionDir, "llmtrace.db")
+		var storeErr error
+		traceStore, storeErr = llmtrace.NewStore(dbPath)
+		if storeErr != nil {
+			fmt.Fprintf(os.Stderr, "error creating llmtrace store: %v\n", storeErr)
+			return 1
+		}
+		defer traceStore.Close()
+		srv, _, srvErr := llmtrace.StartServer(llmtraceAddr, traceStore)
+		if srvErr != nil {
+			fmt.Fprintf(os.Stderr, "error starting llmtrace server: %v\n", srvErr)
+			return 1
+		}
+		defer srv.Close()
+		slog.Info("llmtrace server listening", "addr", llmtraceAddr)
+	}
+
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:     gatewayclient.DefaultSession,
-		SessionDir:  sessionDir,
-		CWD:         cwd,
-		Model:       model,
-		MaxTurns:    maxTurns,
-		Temperature: temperature,
-		TimeoutSec:  timeoutSec,
+		Session:       gatewayclient.DefaultSession,
+		SessionDir:    sessionDir,
+		CWD:           cwd,
+		Model:         model,
+		MaxTurns:      maxTurns,
+		Temperature:   temperature,
+		TimeoutSec:    timeoutSec,
+		LLMTraceStore: traceStore,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing gateway client: %v\n", err)

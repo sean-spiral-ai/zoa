@@ -11,6 +11,7 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/internal/llmtrace"
 	"zoa/internal/tracecontrol"
 	"zoa/lmflib"
 	lmfrt "zoa/lmfrt"
@@ -504,9 +505,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		SystemPrompt:    defaultChatSystemPrompt,
 		Tools:           tools,
 		InitialMessages: history,
-		OnMessage: func(_ context.Context, msg baselineagent.ConversationMessage) error {
-			return state.appendConversationMessage(session, msg, time.Now().UTC())
-		},
+		Tracer: newTracerFromStore(tc.LLMTraceStore()),
 	})
 	if err != nil {
 		return "", err
@@ -516,9 +515,15 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 	if promptCtx == nil {
 		promptCtx = context.Background()
 	}
+	historyLen := len(history)
 	res, err := conv.Prompt(promptCtx, message)
 	if err != nil {
 		return "", err
+	}
+
+	// Persist new messages (everything after the initial history).
+	if full := conv.History(); len(full) > historyLen {
+		_ = state.appendConversationMessages(session, full[historyLen:], time.Now().UTC())
 	}
 
 	text := strings.TrimSpace(res.FinalResponse)
@@ -784,6 +789,13 @@ func inboundPumpInputFromRecvInput(input map[string]any) (map[string]any, error)
 		out["temperature"] = temperature
 	}
 	return out, nil
+}
+
+func newTracerFromStore(store *llmtrace.Store) llmtrace.MessageTracer {
+	if store == nil {
+		return nil
+	}
+	return llmtrace.NewTracer(store)
 }
 
 func cloneMapAnyLocal(in map[string]any) map[string]any {
