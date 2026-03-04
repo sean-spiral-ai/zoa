@@ -39,6 +39,11 @@ type outboxRow struct {
 	SentAt    string
 }
 
+const queryConversationEventsBySession = `SELECT id, created_at, message_json
+		 FROM gateway__conversation_event
+		 WHERE session = ?
+		 ORDER BY id`
+
 func newState(tc *lmfrt.TaskContext) *state {
 	return &state{tc: tc}
 }
@@ -566,30 +571,35 @@ func (s *state) processingCount(session string) (int64, error) {
 }
 
 func (s *state) loadConversationHistory(session string) ([]baselineagent.ConversationMessage, error) {
-	queryRes, err := s.tc.SqlQuery(
-		`SELECT message_json
-		 FROM gateway__conversation_event
-		 WHERE session = ?
-		 ORDER BY id`,
-		session,
-	)
+	queryRes, err := s.tc.SqlQuery(queryConversationEventsBySession, session)
 	if err != nil {
 		return nil, err
 	}
 	history := make([]baselineagent.ConversationMessage, 0, len(queryRes.Rows))
 	for _, item := range queryRes.Rows {
 		raw, _ := item["message_json"].(string)
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
+		msg, ok, err := decodeConversationMessage(raw)
+		if err != nil {
+			return nil, err
 		}
-		var msg baselineagent.ConversationMessage
-		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			return nil, fmt.Errorf("decode gateway conversation event: %w", err)
+		if !ok {
+			continue
 		}
 		history = append(history, msg)
 	}
 	return history, nil
+}
+
+func decodeConversationMessage(raw string) (baselineagent.ConversationMessage, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return baselineagent.ConversationMessage{}, false, nil
+	}
+	var msg baselineagent.ConversationMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		return baselineagent.ConversationMessage{}, false, fmt.Errorf("decode gateway conversation event: %w", err)
+	}
+	return msg, true, nil
 }
 
 func (s *state) appendConversationMessages(session string, messages []baselineagent.ConversationMessage, at time.Time) error {

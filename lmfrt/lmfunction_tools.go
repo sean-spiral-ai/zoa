@@ -32,11 +32,11 @@ type searchLMFunctionsTool struct {
 func (t *searchLMFunctionsTool) Spec() baselineagent.ToolSpec {
 	return baselineagent.ToolSpec{
 		Name:        "search_lmfunctions",
-		Description: "Search registered LM Functions by id and when_to_use guidance.",
+		Description: "Search registered LM Functions by id and when_to_use guidance using literal text matching only (no globs/wildcards).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Free-text search query (optional)"},
+				"query": map[string]any{"type": "string", "description": "Optional literal text query. Matched case-insensitively against id/when_to_use; globs/wildcards are not supported."},
 				"limit": map[string]any{"type": "integer", "description": "Maximum results (default 10, max 50)"},
 			},
 		},

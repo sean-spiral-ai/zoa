@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	baselineagent "zoa/baselineagent"
+	gatewaylmf "zoa/lmflib/gateway"
 
 	_ "modernc.org/sqlite"
 )
@@ -19,15 +24,16 @@ func runInspect(args []string) int {
 		sessionDir string
 		sqlitePath string
 		limit      int
+		session    string
 	)
 	inspectFlags.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Session directory containing state.db")
 	inspectFlags.StringVar(&sqlitePath, "sqlite-path", "", "Explicit SQLite path (overrides --session-dir)")
 	inspectFlags.IntVar(&limit, "limit", 50, "Max rows to print for SQL query results")
+	inspectFlags.StringVar(&session, "session", "default", "Gateway session id (used by inspect conversation)")
 
 	if err := inspectFlags.Parse(args); err != nil {
 		return 2
 	}
-	query := strings.TrimSpace(strings.Join(inspectFlags.Args(), " "))
 	if strings.TrimSpace(sqlitePath) == "" {
 		sqlitePath = filepath.Join(sessionDir, "state.db")
 	}
@@ -51,10 +57,30 @@ func runInspect(args []string) int {
 		return 1
 	}
 
-	if query != "" {
-		return runInspectSQL(db, query, limit)
+	rest := inspectFlags.Args()
+	if len(rest) == 0 {
+		return runInspectSummary(absPath, db)
 	}
-	return runInspectSummary(absPath, db)
+
+	switch rest[0] {
+	case "sql":
+		query := strings.TrimSpace(strings.Join(rest[1:], " "))
+		if query == "" {
+			fmt.Fprintln(os.Stderr, "error: missing SQL query")
+			fmt.Fprintln(os.Stderr, "usage: zoa inspect [flags] sql \"SELECT ...\"")
+			return 2
+		}
+		return runInspectSQL(db, query, limit)
+	case "conversation":
+		return runInspectConversation(db, session)
+	default:
+		fmt.Fprintf(os.Stderr, "error: unknown inspect subcommand %q\n", rest[0])
+		fmt.Fprintln(os.Stderr, "usage:")
+		fmt.Fprintln(os.Stderr, "  zoa inspect [flags]")
+		fmt.Fprintln(os.Stderr, "  zoa inspect [flags] sql \"<sql>\"")
+		fmt.Fprintln(os.Stderr, "  zoa inspect [flags] conversation")
+		return 2
+	}
 }
 
 func runInspectSummary(sqlitePath string, db *sql.DB) int {
@@ -159,6 +185,104 @@ func runInspectSQL(db *sql.DB, query string, limit int) int {
 		fmt.Printf("(%d rows)\n", rowCount)
 	}
 	return 0
+}
+
+func runInspectConversation(db *sql.DB, session string) int {
+	events, err := gatewaylmf.DebugGetConversation(context.Background(), db, session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
+		return 1
+	}
+
+	session = strings.TrimSpace(session)
+	if session == "" {
+		session = "default"
+	}
+	fmt.Printf("Conversation session=%s\n", session)
+	fmt.Printf("Events: %d\n", len(events))
+	if len(events) == 0 {
+		return 0
+	}
+	fmt.Println("")
+
+	for _, ev := range events {
+		role := strings.TrimSpace(string(ev.Message.Role))
+		if role == "" {
+			role = "unknown"
+		}
+		fmt.Printf("[%d] %s %s\n", ev.ID, ev.CreatedAt, role)
+		fmt.Println(renderInspectConversationMessage(ev.Message))
+		fmt.Println("")
+	}
+	return 0
+}
+
+func renderInspectConversationMessage(msg baselineagent.ConversationMessage) string {
+	sections := []string{}
+	primaryText := strings.TrimSpace(msg.Text)
+	if primaryText != "" {
+		sections = append(sections, primaryText)
+	}
+
+	partTexts := []string{}
+	for _, p := range msg.Parts {
+		if text := strings.TrimSpace(p.Text); text != "" {
+			if primaryText != "" && text == primaryText {
+				continue
+			}
+			partTexts = append(partTexts, text)
+		}
+	}
+	if len(partTexts) > 0 {
+		sections = append(sections, strings.Join(partTexts, "\n\n"))
+	}
+
+	toolCalls := []string{}
+	if len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			toolCalls = append(toolCalls, formatInspectToolCall(tc))
+		}
+	} else {
+		for _, p := range msg.Parts {
+			if p.ToolCall != nil {
+				toolCalls = append(toolCalls, formatInspectToolCall(*p.ToolCall))
+			}
+		}
+	}
+	if len(toolCalls) > 0 {
+		sections = append(sections, strings.Join(toolCalls, "\n"))
+	}
+
+	toolResults := []string{}
+	for _, tr := range msg.ToolResults {
+		status := "ok"
+		if tr.IsError {
+			status = "error"
+		}
+		output := strings.TrimSpace(tr.Output)
+		if output == "" {
+			output = "(no output)"
+		}
+		toolResults = append(toolResults, fmt.Sprintf("tool_result call_id=%s name=%s status=%s\n%s", strings.TrimSpace(tr.CallID), strings.TrimSpace(tr.Name), status, output))
+	}
+	if len(toolResults) > 0 {
+		sections = append(sections, strings.Join(toolResults, "\n\n"))
+	}
+
+	if len(sections) == 0 {
+		return "(empty)"
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func formatInspectToolCall(call baselineagent.ConversationToolCall) string {
+	argsJSON := "{}"
+	if len(call.Args) > 0 {
+		if b, err := json.Marshal(call.Args); err == nil {
+			argsJSON = string(b)
+		}
+	}
+	return fmt.Sprintf("tool_call id=%s name=%s args=%s", strings.TrimSpace(call.ID), strings.TrimSpace(call.Name), argsJSON)
 }
 
 func sqlitePragmaInt(db *sql.DB, name string) (int64, error) {
