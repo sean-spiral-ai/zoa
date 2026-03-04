@@ -4,6 +4,7 @@ import lmfrt "zoa/lmfrt"
 
 const lmFunctionSystemMixinContent = `LM Function system context:
 - LM Functions are reusable workflows executed by the LM Function Runtime.
+- LM Mixins are reusable context snippets that can be loaded into the context window for future NL execution.
 - They can combine programmatic execution (Go code) and natural-language/agentic execution (TaskContext NLExec/NLCondition).
 - Treat LM Functions as composable building blocks that are clear, testable, and narrowly scoped.
 - LM Functions live within the zoa project (often located at /projects/common/zoa).
@@ -64,7 +65,7 @@ Execution requirements:
 func lmFunctionSystemMixin() *lmfrt.Mixin {
 	return &lmfrt.Mixin{
 		ID:        "intrinsic.lmfunction_system",
-		WhenToUse: "Use when you need authoritative context about LM Function architecture, conventions, and TaskContext APIs while designing or editing LM Functions.",
+		WhenToUse: "Use when you need authoritative context about LM Function architecture, LM Mixins, conventions, and TaskContext APIs while designing or editing LM Functions.",
 		Content:   lmFunctionSystemMixinContent,
 	}
 }
