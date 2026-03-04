@@ -322,7 +322,7 @@ func toAnthropicMessages(messages []Message) (string, []anthropicMessage) {
 						Type:  "tool_use",
 						ID:    callID,
 						Name:  call.Name,
-						Input: call.Args,
+						Input: normalizeToolCallArgs(call.Args),
 					})
 					continue
 				}
@@ -352,7 +352,7 @@ func toAnthropicMessages(messages []Message) (string, []anthropicMessage) {
 						Type:  "tool_use",
 						ID:    callID,
 						Name:  call.Name,
-						Input: call.Args,
+						Input: normalizeToolCallArgs(call.Args),
 					})
 				}
 			}
@@ -389,4 +389,11 @@ func toAnthropicMessages(messages []Message) (string, []anthropicMessage) {
 	}
 
 	return system, out
+}
+
+func normalizeToolCallArgs(args map[string]any) map[string]any {
+	if args == nil {
+		return map[string]any{}
+	}
+	return args
 }
