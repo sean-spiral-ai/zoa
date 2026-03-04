@@ -9,6 +9,7 @@ import (
 	diverseideation "zoa/lmflib/diverse_ideation"
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
+	mdtopdf "zoa/lmflib/md_to_pdf"
 	lmfrt "zoa/lmfrt"
 )
 
@@ -112,6 +113,9 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	}
 	if err := diverseideation.RegisterFunctions(registry); err != nil {
 		return nil, fmt.Errorf("register diverse_ideation functions: %w", err)
+	}
+	if err := mdtopdf.RegisterFunctions(registry); err != nil {
+		return nil, fmt.Errorf("register md_to_pdf functions: %w", err)
 	}
 
 	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{

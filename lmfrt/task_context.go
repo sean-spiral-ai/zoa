@@ -22,6 +22,8 @@ type TaskContextOptions struct {
 	Timeout     time.Duration
 	Temperature float64
 	SQLitePath  string
+	Namespace   string
+	AssetsDir   string
 
 	logger       *slog.Logger
 	sqlDB        sqlExecutor
@@ -39,6 +41,10 @@ type TaskContext struct {
 	mainConv     baselineagent.Conversation
 	sqlDB        sqlExecutor
 	ownsSQL      bool
+	namespace    string
+	sqlitePath   string
+	assetsDir    string
+	tmpDirs      []string
 	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
 	lmfTools     func() ([]baselineagent.Tool, error)
@@ -121,6 +127,9 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		mainConv:     nil,
 		sqlDB:        sqlDB,
 		ownsSQL:      ownsSQL,
+		namespace:    opts.Namespace,
+		sqlitePath:   opts.SQLitePath,
+		assetsDir:    opts.AssetsDir,
 		registerPump: opts.registerPump,
 		spawnTask:    opts.spawnTask,
 		lmfTools:     opts.lmfTools,
@@ -133,10 +142,49 @@ func (t *TaskContext) Context() context.Context {
 }
 
 func (t *TaskContext) Close() error {
+	for _, dir := range t.tmpDirs {
+		_ = os.RemoveAll(dir)
+	}
+	t.tmpDirs = nil
 	if !t.ownsSQL || t.sqlDB == nil {
 		return nil
 	}
 	return t.sqlDB.Close()
+}
+
+// GetStateDir returns a persistent state directory for this namespace,
+// located at <dir-of-state.db>/namespace_state/<namespace>/.
+// Creates the directory if it doesn't exist.
+func (t *TaskContext) GetStateDir() (string, error) {
+	if t.namespace == "" {
+		return "", fmt.Errorf("namespace is not set on this task context")
+	}
+	if t.sqlitePath == "" {
+		return "", fmt.Errorf("sqlite path is not set on this task context")
+	}
+	dir := filepath.Join(filepath.Dir(t.sqlitePath), "namespace_state", t.namespace)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create state dir: %w", err)
+	}
+	return dir, nil
+}
+
+// GetTmpDir creates a new temporary directory and registers it for cleanup on Close().
+func (t *TaskContext) GetTmpDir() (string, error) {
+	dir, err := os.MkdirTemp("", "lmfrt-"+t.namespace+"-*")
+	if err != nil {
+		return "", fmt.Errorf("create tmp dir: %w", err)
+	}
+	t.tmpDirs = append(t.tmpDirs, dir)
+	return dir, nil
+}
+
+// GetAssetsDir returns the assets directory path for this namespace.
+func (t *TaskContext) GetAssetsDir() (string, error) {
+	if t.assetsDir == "" {
+		return "", fmt.Errorf("assets dir is not configured for this task context")
+	}
+	return t.assetsDir, nil
 }
 
 func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) {

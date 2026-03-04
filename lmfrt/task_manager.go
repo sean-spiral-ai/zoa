@@ -377,6 +377,10 @@ func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[s
 	tcOpts.spawnTask = m.Spawn
 	tcOpts.lmfTools = m.newLMFunctionTools
 	tcOpts.loadMixin = m.registry.GetMixin
+	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
+	if fn.AssetsDir != "" {
+		tcOpts.AssetsDir = fn.AssetsDir
+	}
 	taskCtx, err := NewTaskContext(ctx, tcOpts)
 	if err != nil {
 		return RunResult{}, err
@@ -662,6 +666,15 @@ func cloneAny(v any) any {
 	default:
 		return v
 	}
+}
+
+// namespaceFromFunctionID extracts the namespace prefix from a dotted function ID.
+// e.g. "gateway.recv" → "gateway", "md_to_pdf.md_to_pdf" → "md_to_pdf"
+func namespaceFromFunctionID(id string) string {
+	if i := strings.IndexByte(id, '.'); i > 0 {
+		return id[:i]
+	}
+	return id
 }
 
 func cloneConversationMessages(in []baselineagent.ConversationMessage) []baselineagent.ConversationMessage {

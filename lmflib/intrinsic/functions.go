@@ -34,10 +34,25 @@ TaskContext reference:
   - Spawn / RegisterPump / NewLmFunctionTools
   - LoadMixin
   - NLExec / NLExecTyped / NLCondition
+  - GetStateDir / GetTmpDir / GetAssetsDir
+
+Filesystem APIs (GetStateDir, GetTmpDir, GetAssetsDir):
+- GetStateDir() returns a persistent directory at <sessionDir>/namespace_state/<namespace>/.
+  Use for venvs, caches, downloaded models, or anything that should survive across invocations.
+  Created automatically on first call. Namespace is derived from the function ID prefix.
+- GetTmpDir() returns a fresh temporary directory, auto-removed when TaskContext.Close() runs.
+  Use for intermediate/scratch files that the caller doesn't need after the function returns.
+- GetAssetsDir() returns the path to lmflib/<namespace>/assets/ in the source tree.
+  Use for bundled scripts, stylesheets, configs, or other static files shipped with the function.
+  Set by populating AssetsDir on *lmfrt.Function (typically via runtime.Caller in register.go).
+- Common pattern: copy assets into the state dir on first run, then operate from the state dir.
+  See lmflib/md_to_pdf/ for a reference: it copies a Python script + CSS to the state dir,
+  creates a venv there, installs deps once (guarded by a marker file), and runs from the state dir.
 
 Reference implementations:
 - lmflib/gateway/functions.go (multi-function namespace with stateful runtime behavior)
 - lmflib/diverse_ideation/functions.go (single-function namespace style)
+- lmflib/md_to_pdf/functions.go (external script with venv, assets, and state dir)
 
 Execution requirements:
 - Inspect existing code before editing.

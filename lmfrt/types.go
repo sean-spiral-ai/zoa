@@ -15,7 +15,9 @@ type Function struct {
 	InputSchema map[string]any
 	// OutputSchema describes the function output object shape when available.
 	OutputSchema map[string]any
-	Exec         ExecFunc
+	// AssetsDir is an optional path to a directory of static assets bundled with this function.
+	AssetsDir string
+	Exec      ExecFunc
 }
 
 type RunResult struct {
