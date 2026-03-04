@@ -336,7 +336,7 @@ ExecStart={{.LauncherPath}}
 Restart=always
 RestartSec=5
 SuccessExitStatus=42
-KillMode=process
+KillMode=control-group
 Environment=PATH={{.PATH}}
 
 [Install]
