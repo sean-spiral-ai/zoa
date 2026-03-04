@@ -22,6 +22,7 @@ type SessionConfig struct {
 	SystemPrompt    string
 	VerboseLog      io.Writer
 	InitialMessages []llm.Message
+	OnMessage       func(context.Context, llm.Message) error
 }
 
 type RunResult struct {
@@ -44,6 +45,7 @@ type Session struct {
 	maxTurns    int
 	verboseLog  io.Writer
 	messages    []llm.Message
+	onMessage   func(context.Context, llm.Message) error
 }
 
 const toolArgsTracePreviewMax = 2000
@@ -80,6 +82,7 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		maxTurns:    cfg.MaxTurns,
 		verboseLog:  cfg.VerboseLog,
 		messages:    initialMessages,
+		onMessage:   cfg.OnMessage,
 	}, nil
 }
 
@@ -109,7 +112,9 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 		"prompt_preview": promptPreview,
 	})
 
-	s.messages = append(s.messages, llm.Message{Role: llm.RoleUser, Text: userPrompt})
+	if err := s.appendMessage(ctx, llm.Message{Role: llm.RoleUser, Text: userPrompt}); err != nil {
+		return RunResult{}, err
+	}
 
 	for turn := 1; turn <= s.maxTurns; turn++ {
 		turnCtx, turnRegion := semtrace.StartRegionWithAttrs(ctx, fmt.Sprintf("baselineagent.turn.%d", turn), map[string]any{
@@ -158,7 +163,10 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			Parts:     cloneAssistantParts(resp.Parts),
 			ToolCalls: cloneToolCalls(resp.ToolCalls),
 		}
-		s.messages = append(s.messages, assistantMsg)
+		if err := s.appendMessage(turnCtx, assistantMsg); err != nil {
+			turnRegion.End()
+			return RunResult{Turns: turn - 1, Messages: cloneMessages(s.messages)}, err
+		}
 
 		s.logf("turn %d assistant text:\n%s\n", turn, strings.TrimSpace(resp.Text))
 
@@ -268,7 +276,10 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			})
 			toolRegion.End()
 		}
-		s.messages = append(s.messages, llm.Message{Role: llm.RoleTool, ToolResults: cloneToolResults(toolResults)})
+		if err := s.appendMessage(turnCtx, llm.Message{Role: llm.RoleTool, ToolResults: cloneToolResults(toolResults)}); err != nil {
+			turnRegion.End()
+			return RunResult{Turns: turn - 1, Messages: cloneMessages(s.messages)}, err
+		}
 		turnRegion.End()
 	}
 
@@ -298,16 +309,35 @@ func (s *Session) logf(format string, args ...any) {
 	fmt.Fprintf(s.verboseLog, format, args...)
 }
 
+func (s *Session) appendMessage(ctx context.Context, msg llm.Message) error {
+	cloned := cloneMessage(msg)
+	if s.onMessage != nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := s.onMessage(ctx, cloneMessage(cloned)); err != nil {
+			return err
+		}
+	}
+	s.messages = append(s.messages, cloned)
+	return nil
+}
+
+func cloneMessage(m llm.Message) llm.Message {
+	out := llm.Message{
+		Role:        m.Role,
+		Text:        m.Text,
+		Parts:       cloneAssistantParts(m.Parts),
+		ToolCalls:   cloneToolCalls(m.ToolCalls),
+		ToolResults: cloneToolResults(m.ToolResults),
+	}
+	return out
+}
+
 func cloneMessages(in []llm.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(in))
 	for _, m := range in {
-		out = append(out, llm.Message{
-			Role:        m.Role,
-			Text:        m.Text,
-			Parts:       cloneAssistantParts(m.Parts),
-			ToolCalls:   cloneToolCalls(m.ToolCalls),
-			ToolResults: cloneToolResults(m.ToolResults),
-		})
+		out = append(out, cloneMessage(m))
 	}
 	return out
 }

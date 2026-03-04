@@ -92,11 +92,11 @@ go test ./...
 
 - For Gemini, set `GEMINI_API_KEY`.
 - For Anthropic OAuth, set `ANTHROPIC_OAUTH_TOKEN`.
-- `intrinsic.modify_codebase` and LLM-backed tests require model credentials.
+- LLM-backed tests and intrinsic LM Functions require model credentials.
 - There is no pre/post condition framework now; programmatic checks are regular Go errors in function bodies.
 - `ctx.NLCondition(...)` evaluates NL checks in an isolated fork of the task's baselineagent conversation.
 - `ctx.NLExec(...)` appends to one shared task conversation. Use `lmfrt.NLExecTyped[T](ctx, ...)` for typed JSON returns.
-- Baseline agent default system prompt is intentionally short/generic; `intrinsic.modify_codebase` provides the full coding-focused system prompt.
+- Baseline agent default system prompt is intentionally short/generic.
 - `NLExecTyped` requests JSON-only responses. Gemini uses `responseMimeType=application/json` + `responseSchema`; Claude uses native `output_config.format.type=json_schema`.
 - LMF now includes a task runtime (`TaskManager`) and model-callable tools:
   - `search_lmfunctions`

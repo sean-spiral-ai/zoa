@@ -8,34 +8,63 @@ import (
 	lmfrt "zoa/lmfrt"
 )
 
-const intrinsicModifyCodebasePrompt = `You are a pragmatic coding agent working inside a real codebase.
+const intrinsicCreateLMFunctionPrompt = `You are creating a new LM Function in this repository.
 
-Core behavior:
-- Inspect relevant files before editing.
-- Make minimal, correct changes that satisfy the request.
-- Prefer surgical edits with the edit tool; use write for new files or full rewrites.
-- Run validation commands (build/tests/lint) when appropriate.
+LM Function system context:
+- LM Functions are reusable workflows executed by the LM Function Runtime.
+- They can combine programmatic execution (Go code) and natural-language/agentic execution (TaskContext NLExec/NLCondition).
+- Treat LM Functions as composable building blocks that are clear, testable, and narrowly scoped.
+- LM Functions live within the zoa project (often located at /projects/common/zoa).
 
-Tool guidance:
-- Paths are relative to workspace root unless absolute under root.
-- Read output can be truncated; continue with offset when needed.
-- If a tool fails, adapt and retry with better arguments.
-- When you decide to call tools, first provide a short Reason: line (one sentence) explaining why the next tool call(s) are needed.
-- Validate your changes (for Go tasks, run go test or equivalent).
+Repository conventions to follow:
+- LM Function implementations live under lmflib/<namespace>/.
+- Define functions in lmflib/<namespace>/functions.go.
+- Register them in lmflib/<namespace>/register.go.
+- Use IDs like "<namespace>.<action>".
+- Include strong WhenToUse guidance and explicit JSON schemas.
+- Validate and normalize inputs; return stable structured outputs.
+- Keep behavior deterministic where possible and avoid hidden side effects.
+
+What LM Functions look like in code (brief):
+- Return a *lmfrt.Function (Go struct) with:
+  - ID
+  - WhenToUse
+  - InputSchema / OutputSchema
+  - Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error)
+- Example shape:
+  func myFunction() *lmfrt.Function { ... }
+  func runMyFunction(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) { ... }
+- Register in RegisterFunctions(...) via registry.Register(myFunction()).
+
+TaskContext reference:
+- Read lmfrt/task_context.go to understand available runtime APIs:
+  - SqlExec / SqlQuery / SqlTx
+  - Spawn / RegisterPump / NewLmFunctionTools
+  - NLExec / NLExecTyped / NLCondition
+
+Reference implementations:
+- lmflib/gateway/functions.go (multi-function namespace with stateful runtime behavior)
+- lmflib/intrinsic/functions.go (intrinsic namespace style and NLExec-based execution)
+
+Execution requirements:
+- Inspect existing code before editing.
+- Make minimal, production-quality changes consistent with surrounding style.
+- Add or update tests when appropriate.
+- Run targeted validation commands (at least relevant go test packages).
 
 Final response:
-- Summarize what changed and validation status.
+- Briefly summarize created/updated files, function IDs added, and validation results.
 `
 
-func intrinsicModifyCodebase() *lmfrt.Function {
+func intrinsicCreateLMFunction() *lmfrt.Function {
 	return &lmfrt.Function{
-		ID:        "intrinsic.modify_codebase",
-		WhenToUse: "Use when you need autonomous code edits in a workspace with verification (build/test/lint) and a human-readable change summary.",
+		ID:        "intrinsic.create_lmfunction",
+		WhenToUse: "Use when you need to add or update LM Functions in this repository following lmflib namespace conventions and runtime integration patterns.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"cwd":         map[string]any{"type": "string", "description": "Current working directory for the task"},
-				"instruction": map[string]any{"type": "string", "description": "The coding task to perform"},
+				"instruction": map[string]any{"type": "string", "description": "What LM Function(s) to create or update"},
 			},
 			"required": []string{"cwd", "instruction"},
 		},
@@ -46,11 +75,15 @@ func intrinsicModifyCodebase() *lmfrt.Function {
 			},
 			"required": []string{"final_response"},
 		},
-		Exec: runIntrinsicModifyCodebase,
+		Exec: runIntrinsicCreateLMFunction,
 	}
 }
 
-func runIntrinsicModifyCodebase(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+func runIntrinsicCreateLMFunction(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+	return runIntrinsicPromptTask(tc, input, "intrinsic.create_lmfunction", intrinsicCreateLMFunctionPrompt)
+}
+
+func runIntrinsicPromptTask(tc *lmfrt.TaskContext, input map[string]any, functionID string, systemPrompt string) (map[string]any, error) {
 	cwd, err := lmflib.StringInput(input, "cwd", true)
 	if err != nil {
 		return nil, err
@@ -71,7 +104,7 @@ func runIntrinsicModifyCodebase(tc *lmfrt.TaskContext, input map[string]any) (ma
 
 Complete this coding task in the current workspace:
 %s
-`, intrinsicModifyCodebasePrompt, instruction)
+`, systemPrompt, instruction)
 
 	finalResponse, err := tc.NLExec(combinedTask, nil)
 	output := map[string]any{
@@ -79,12 +112,12 @@ Complete this coding task in the current workspace:
 	}
 	if strings.TrimSpace(finalResponse) == "" {
 		if err != nil {
-			return output, fmt.Errorf("intrinsic.modify_codebase failed with empty final_response: %w", err)
+			return output, fmt.Errorf("%s failed with empty final_response: %w", functionID, err)
 		}
-		return output, fmt.Errorf("intrinsic.modify_codebase produced empty final_response")
+		return output, fmt.Errorf("%s produced empty final_response", functionID)
 	}
 	if err != nil {
-		return output, fmt.Errorf("intrinsic.modify_codebase failed: %w", err)
+		return output, fmt.Errorf("%s failed: %w", functionID, err)
 	}
 	return output, nil
 }

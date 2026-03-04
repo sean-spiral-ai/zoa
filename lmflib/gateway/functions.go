@@ -499,6 +499,9 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		SystemPrompt:    defaultChatSystemPrompt,
 		Tools:           tools,
 		InitialMessages: history,
+		OnMessage: func(_ context.Context, msg baselineagent.ConversationMessage) error {
+			return state.appendConversationMessage(session, msg, time.Now().UTC())
+		},
 	})
 	if err != nil {
 		return "", err
@@ -510,14 +513,6 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 	}
 	res, err := conv.Prompt(promptCtx, message)
 	if err != nil {
-		return "", err
-	}
-	allHistory := conv.History()
-	newStart := len(history)
-	if newStart < 0 || newStart > len(allHistory) {
-		newStart = 0
-	}
-	if err := state.appendConversationMessages(session, allHistory[newStart:], time.Now().UTC()); err != nil {
 		return "", err
 	}
 

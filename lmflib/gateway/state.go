@@ -631,6 +631,10 @@ func (s *state) appendConversationMessages(session string, messages []baselineag
 	})
 }
 
+func (s *state) appendConversationMessage(session string, message baselineagent.ConversationMessage, at time.Time) error {
+	return s.appendConversationMessages(session, []baselineagent.ConversationMessage{message}, at)
+}
+
 func int64FromValueDefault(v any) int64 {
 	if out, ok := lmflib.Int64FromValue(v); ok {
 		return out

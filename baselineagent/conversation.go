@@ -21,6 +21,7 @@ type ConversationConfig struct {
 	SystemPrompt    string
 	Tools           []Tool
 	InitialMessages []ConversationMessage
+	OnMessage       func(context.Context, ConversationMessage) error
 }
 
 type Conversation interface {
@@ -145,6 +146,12 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		SystemPrompt:    systemPrompt,
 		VerboseLog:      cfg.VerboseLog,
 		InitialMessages: toLLMMessages(cfg.InitialMessages),
+		OnMessage: func(ctx context.Context, message llm.Message) error {
+			if cfg.OnMessage == nil {
+				return nil
+			}
+			return cfg.OnMessage(ctx, fromLLMMessages([]llm.Message{message})[0])
+		},
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("create session: %w", err)
