@@ -36,7 +36,7 @@ func diverseIdeationFunction() *lmfrt.Function {
 			"properties": map[string]any{
 				"brief": map[string]any{
 					"type":        "string",
-					"description": "Distilled context brief for ideation. Should include: domain/topic, constraints (scope, budget, feasibility), target audience, known solutions to avoid, evaluation criteria preview, and entropy sources (real-world data, trends, signals). The more specific and grounded, the more diverse AND relevant the output.",
+					"description": "Distilled context brief for ideation. Should include: domain/topic, constraints (scope, budget, feasibility), target audience, known solutions to avoid, evaluation criteria preview, and entropy sources (real-world data, trends, signals -- NOT LLM-generated data. Omit if none.). The more specific and grounded, the more diverse AND relevant the output.",
 				},
 				"num_ideas": map[string]any{
 					"type":        "integer",
