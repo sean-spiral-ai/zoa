@@ -63,7 +63,7 @@ func daemonInstall(args []string) int {
 	)
 
 	defaultCWD := "/"
-	defaultTimeout := 300
+	defaultTimeout := 3600
 	defaultPollMs := 400
 	defaultLogLevel := "info"
 	defaultTraceHTTPAddr := "127.0.0.1:3008"
@@ -76,7 +76,7 @@ func daemonInstall(args []string) int {
 	fs.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	fs.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	fs.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
-	fs.IntVar(&timeoutSec, "timeout", defaultTimeout, "Per-prompt timeout (seconds)")
+	fs.IntVar(&timeoutSec, "timeout", defaultTimeout, "Per-prompt timeout in seconds (0 disables timeout)")
 	fs.IntVar(&pollMs, "poll-ms", defaultPollMs, "Outbox polling interval in milliseconds")
 
 	if err := fs.Parse(args); err != nil {

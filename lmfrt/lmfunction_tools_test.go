@@ -3,7 +3,6 @@ package lmfrt
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,10 +120,10 @@ func TestLoadLMMixinLoadsIntoContext(t *testing.T) {
 	}
 }
 
-func TestCallLMFunctionSupportsTaskTimeout(t *testing.T) {
+func TestCallLMFunctionDoesNotThreadTimeoutSec(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegister(&Function{
-		ID:        "test.call_lmfunction_timeout",
+		ID:        "test.call_lmfunction_no_timeout_field",
 		WhenToUse: "test only",
 		Exec: func(_ *TaskContext, input map[string]any) (map[string]any, error) {
 			_, hasTimeout := input["timeout_sec"]
@@ -143,7 +142,7 @@ func TestCallLMFunctionSupportsTaskTimeout(t *testing.T) {
 
 	tool := &callLMFunctionTool{manager: manager}
 	out, err := tool.Execute(context.Background(), map[string]any{
-		"function_id": "test.call_lmfunction_timeout",
+		"function_id": "test.call_lmfunction_no_timeout_field",
 		"input": map[string]any{
 			"foo": "bar",
 		},
@@ -178,44 +177,29 @@ func TestCallLMFunctionSupportsTaskTimeout(t *testing.T) {
 	}
 }
 
-func TestCallLMFunctionRejectsNegativeTimeout(t *testing.T) {
+func TestCallLMFunctionSpecGuidesWaitAndKillAndOmitsTimeoutField(t *testing.T) {
 	tool := &callLMFunctionTool{}
-	_, err := tool.Execute(context.Background(), map[string]any{
-		"function_id": "test.any",
-		"timeout_sec": -1,
-	})
-	if err == nil {
-		t.Fatalf("expected timeout validation error")
+	spec := tool.Spec()
+	if !strings.Contains(spec.Description, "wait_lmfunction") {
+		t.Fatalf("call_lmfunction description should mention wait_lmfunction: %q", spec.Description)
+	}
+	if !strings.Contains(spec.Description, "kill_lmfunction") {
+		t.Fatalf("call_lmfunction description should mention kill_lmfunction: %q", spec.Description)
+	}
+	props, _ := spec.Schema["properties"].(map[string]any)
+	if _, ok := props["timeout_sec"]; ok {
+		t.Fatalf("call_lmfunction schema should not expose timeout_sec")
 	}
 }
 
-func TestCallLMFunctionTimeoutAppliesToWholeTaskDuration(t *testing.T) {
+func TestKillLMFunctionCancelsRunningTask(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegister(&Function{
-		ID:        "test.call_lmfunction_whole_task_timeout",
+		ID:        "test.kill_lmfunction.cancel",
 		WhenToUse: "test only",
 		Exec: func(tc *TaskContext, _ map[string]any) (map[string]any, error) {
-			ctx := tc.Context()
-			if _, ok := ctx.Deadline(); !ok {
-				return nil, fmt.Errorf("missing task deadline")
-			}
-			step := func(d time.Duration) error {
-				timer := time.NewTimer(d)
-				defer timer.Stop()
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-timer.C:
-					return nil
-				}
-			}
-			if err := step(650 * time.Millisecond); err != nil {
-				return nil, err
-			}
-			if err := step(650 * time.Millisecond); err != nil {
-				return nil, err
-			}
-			return map[string]any{"ok": true}, nil
+			<-tc.Context().Done()
+			return nil, tc.Context().Err()
 		},
 	})
 	manager, err := NewTaskManager(registry, TaskManagerOptions{
@@ -226,36 +210,69 @@ func TestCallLMFunctionTimeoutAppliesToWholeTaskDuration(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	tool := &callLMFunctionTool{manager: manager}
-	out, err := tool.Execute(context.Background(), map[string]any{
-		"function_id": "test.call_lmfunction_whole_task_timeout",
-		"timeout_sec": 1,
+	callTool := &callLMFunctionTool{manager: manager}
+	callOut, err := callTool.Execute(context.Background(), map[string]any{
+		"function_id": "test.kill_lmfunction.cancel",
 	})
 	if err != nil {
 		t.Fatalf("execute call_lmfunction: %v", err)
 	}
-
-	var payload struct {
+	var callPayload struct {
 		TaskID string `json:"task_id"`
 	}
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+	if err := json.Unmarshal([]byte(callOut), &callPayload); err != nil {
+		t.Fatalf("decode call payload: %v", err)
 	}
-	if payload.TaskID == "" {
-		t.Fatalf("missing task_id in payload: %s", out)
+	if callPayload.TaskID == "" {
+		t.Fatalf("missing task_id in call payload: %s", callOut)
 	}
 
-	snapshot, timedOut, err := manager.Wait(payload.TaskID, 5*time.Second)
+	killTool := &killLMFunctionTool{manager: manager}
+	killOut, err := killTool.Execute(context.Background(), map[string]any{
+		"task_id": callPayload.TaskID,
+	})
+	if err != nil {
+		t.Fatalf("execute kill_lmfunction: %v", err)
+	}
+	var killPayload struct {
+		CancelRequested bool `json:"cancel_requested"`
+		Task            struct {
+			TaskID string     `json:"task_id"`
+			Status TaskStatus `json:"status"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal([]byte(killOut), &killPayload); err != nil {
+		t.Fatalf("decode kill payload: %v", err)
+	}
+	if !killPayload.CancelRequested {
+		t.Fatalf("expected cancel_requested=true, payload=%s", killOut)
+	}
+	if killPayload.Task.TaskID != callPayload.TaskID {
+		t.Fatalf("kill payload returned wrong task id: %q", killPayload.Task.TaskID)
+	}
+
+	snapshot, timedOut, err := manager.Wait(callPayload.TaskID, 2*time.Second)
 	if err != nil {
 		t.Fatalf("wait task: %v", err)
 	}
 	if timedOut {
 		t.Fatalf("wait timed out unexpectedly")
 	}
-	if snapshot.Status != TaskStatusFailed {
-		t.Fatalf("expected failed status, got %s", snapshot.Status)
+	if snapshot.Status != TaskStatusCanceled {
+		t.Fatalf("expected canceled status, got %s (%s)", snapshot.Status, snapshot.Error)
 	}
-	if !strings.Contains(strings.ToLower(snapshot.Error), "deadline exceeded") {
-		t.Fatalf("expected deadline exceeded error, got: %q", snapshot.Error)
+}
+
+func TestWaitLMFunctionSpecMentionsKillOnTimeout(t *testing.T) {
+	tool := &waitLMFunctionTool{}
+	spec := tool.Spec()
+	if !strings.Contains(spec.Description, "kill_lmfunction") {
+		t.Fatalf("wait_lmfunction description should mention kill_lmfunction: %q", spec.Description)
+	}
+	props, _ := spec.Schema["properties"].(map[string]any)
+	timeoutProp, _ := props["timeout_sec"].(map[string]any)
+	timeoutDesc, _ := timeoutProp["description"].(string)
+	if !strings.Contains(strings.ToLower(timeoutDesc), "timed_out") {
+		t.Fatalf("timeout_sec description should mention timed_out semantics: %q", timeoutDesc)
 	}
 }

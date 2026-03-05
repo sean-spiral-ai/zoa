@@ -39,7 +39,7 @@ func runTUI(args []string) int {
 	tuiFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	tuiFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	tuiFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
-	tuiFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
+	tuiFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	tuiFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	tuiFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
 

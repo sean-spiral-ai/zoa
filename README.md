@@ -147,5 +147,6 @@ go test ./...
   - `load_lmmixin`
   - `call_lmfunction`
   - `wait_lmfunction`
+  - `kill_lmfunction`
 - `search_lmfunctions` requires `keywords` (array of strings). Keywords are matched literally (case-insensitive substring) against function id/`when_to_use`; any keyword may match.
 - `search_lmmixin` requires `keywords` (array of strings). Keywords are matched literally (case-insensitive substring) against mixin id/`when_to_use`; any keyword may match.

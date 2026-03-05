@@ -24,6 +24,7 @@ func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]baselineage
 		&loadLMMixinTool{registry: registry},
 		&callLMFunctionTool{manager: manager},
 		&waitLMFunctionTool{manager: manager},
+		&killLMFunctionTool{manager: manager},
 	}, nil
 }
 
@@ -221,13 +222,12 @@ func (t *loadLMMixinTool) Execute(_ context.Context, args map[string]any) (strin
 func (t *callLMFunctionTool) Spec() baselineagent.ToolSpec {
 	return baselineagent.ToolSpec{
 		Name:        "call_lmfunction",
-		Description: "Start an LM Function task asynchronously and return a task_id handle.",
+		Description: "Start an LM Function task asynchronously and return a task_id handle. For long-running tasks, use wait_lmfunction with a timeout and call kill_lmfunction if you need to cancel.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"function_id": map[string]any{"type": "string", "description": "LM Function id"},
 				"input":       map[string]any{"type": "object", "description": "Optional function input object"},
-				"timeout_sec": map[string]any{"type": "integer", "description": "Optional timeout in seconds for the entire spawned task duration; applies across all work in the task"},
 			},
 			"required": []string{"function_id"},
 		},
@@ -239,13 +239,6 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 	if err != nil {
 		return "", err
 	}
-	timeoutSec, err := baselineagent.IntArg(args, "timeout_sec", false)
-	if err != nil {
-		return "", err
-	}
-	if timeoutSec < 0 {
-		return "", fmt.Errorf("timeout_sec must be >= 0")
-	}
 
 	input := map[string]any{}
 	if raw, ok := args["input"]; ok && raw != nil {
@@ -256,11 +249,7 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 		input = cloneMapAny(parsed)
 	}
 
-	spawnOpts := SpawnOptions{}
-	if timeoutSec > 0 {
-		spawnOpts.TaskTimeout = time.Duration(timeoutSec) * time.Second
-	}
-	taskID, err := t.manager.Spawn(functionID, input, spawnOpts)
+	taskID, err := t.manager.Spawn(functionID, input, SpawnOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -282,12 +271,12 @@ type waitLMFunctionTool struct {
 func (t *waitLMFunctionTool) Spec() baselineagent.ToolSpec {
 	return baselineagent.ToolSpec{
 		Name:        "wait_lmfunction",
-		Description: "Wait for an LM Function task by task_id.",
+		Description: "Wait for an LM Function task by task_id. If timeout is reached, the task keeps running; call wait_lmfunction again for long-running work or use kill_lmfunction to cancel.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"task_id":     map[string]any{"type": "string", "description": "Task handle returned by call_lmfunction"},
-				"timeout_sec": map[string]any{"type": "integer", "description": "Optional wait timeout in seconds"},
+				"timeout_sec": map[string]any{"type": "integer", "description": "Optional wait timeout in seconds. If exceeded, timed_out=true and task continues running."},
 			},
 			"required": []string{"task_id"},
 		},
@@ -313,6 +302,48 @@ func (t *waitLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 	payload := map[string]any{
 		"timed_out": timedOut,
 		"task":      snapshot,
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode response: %w", err)
+	}
+	return string(b), nil
+}
+
+type killLMFunctionTool struct {
+	manager *TaskManager
+}
+
+func (t *killLMFunctionTool) Spec() baselineagent.ToolSpec {
+	return baselineagent.ToolSpec{
+		Name:        "kill_lmfunction",
+		Description: "Cancel a running LM Function task by task_id.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id": map[string]any{"type": "string", "description": "Task handle returned by call_lmfunction"},
+			},
+			"required": []string{"task_id"},
+		},
+	}
+}
+
+func (t *killLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
+	taskID, err := baselineagent.StringArg(args, "task_id", true)
+	if err != nil {
+		return "", err
+	}
+	cancelRequested, err := t.manager.Cancel(taskID)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := t.manager.Get(taskID)
+	if err != nil {
+		return "", err
+	}
+	payload := map[string]any{
+		"cancel_requested": cancelRequested,
+		"task":             snapshot,
 	}
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

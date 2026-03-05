@@ -49,7 +49,7 @@ func runSlack(args []string) int {
 	slackFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	slackFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
 	slackFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
-	slackFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
+	slackFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	slackFlags.StringVar(&traceHTTPAddr, "trace-http-addr", "127.0.0.1:3008", "runtime trace control HTTP listen address (empty to disable)")
 	slackFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")

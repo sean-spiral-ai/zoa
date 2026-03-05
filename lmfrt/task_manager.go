@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -19,9 +20,10 @@ import (
 type TaskStatus string
 
 const (
-	TaskStatusRunning TaskStatus = "running"
-	TaskStatusDone    TaskStatus = "done"
-	TaskStatusFailed  TaskStatus = "failed"
+	TaskStatusRunning  TaskStatus = "running"
+	TaskStatusDone     TaskStatus = "done"
+	TaskStatusFailed   TaskStatus = "failed"
+	TaskStatusCanceled TaskStatus = "canceled"
 )
 
 type TaskSnapshot struct {
@@ -68,7 +70,12 @@ type taskRecord struct {
 	spawnOptions SpawnOptions
 	input        map[string]any
 	conversation []baselineagent.ConversationMessage
-	done         chan struct{}
+	parentTaskID string
+	cancelFunc   context.CancelFunc
+	// cancelRequested handles the race where Cancel(taskID) happens after Spawn
+	// returns but before runTask installs cancelFunc.
+	cancelRequested bool
+	done            chan struct{}
 }
 
 type pumpRunner struct {
@@ -185,15 +192,22 @@ func (m *TaskManager) Close() error {
 }
 
 func (m *TaskManager) Spawn(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
+	return m.spawnWithParent("", functionID, input, opts)
+}
+
+func (m *TaskManager) spawnWithParent(parentTaskID string, functionID string, input map[string]any, opts SpawnOptions) (string, error) {
 	fn, mergedInput, err := m.resolveFunctionInput(functionID, input)
 	if err != nil {
 		return "", err
 	}
-	taskID, rec := m.newRecord(functionID, mergedInput, opts)
+	taskID, rec, err := m.newRecord(parentTaskID, functionID, mergedInput, opts)
+	if err != nil {
+		return "", err
+	}
 	_ = m.persistTask(taskID)
 
 	if !opts.HideInLogByDefault {
-		m.logger.Info("task spawned", "task_id", taskID, "function_id", functionID)
+		m.logger.Info("task spawned", "task_id", taskID, "function_id", functionID, "parent_task_id", strings.TrimSpace(parentTaskID))
 	}
 	go m.runTask(fn, rec, mergedInput)
 	return taskID, nil
@@ -278,6 +292,57 @@ func (m *TaskManager) Get(taskID string) (TaskSnapshot, error) {
 	return clone, nil
 }
 
+func (m *TaskManager) Cancel(taskID string) (bool, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return false, fmt.Errorf("task_id cannot be empty")
+	}
+	m.mu.Lock()
+	_, ok := m.tasks[taskID]
+	if !ok {
+		m.mu.Unlock()
+		return false, fmt.Errorf("unknown task_id: %s", taskID)
+	}
+	toCancel := make([]context.CancelFunc, 0)
+	anyCanceled := false
+	visitQueue := []string{taskID}
+	visited := map[string]struct{}{}
+	for len(visitQueue) > 0 {
+		current := visitQueue[0]
+		visitQueue = visitQueue[1:]
+		if _, seen := visited[current]; seen {
+			continue
+		}
+		visited[current] = struct{}{}
+
+		rec, exists := m.tasks[current]
+		if !exists {
+			continue
+		}
+		select {
+		case <-rec.done:
+		default:
+			rec.cancelRequested = true
+			if rec.cancelFunc != nil {
+				toCancel = append(toCancel, rec.cancelFunc)
+			}
+			anyCanceled = true
+		}
+		for childID, child := range m.tasks {
+			if child == nil {
+				continue
+			}
+			if child.parentTaskID == current {
+				visitQueue = append(visitQueue, childID)
+			}
+		}
+	}
+	m.mu.Unlock()
+	for _, cancel := range toCancel {
+		cancel()
+	}
+	return anyCanceled, nil
+}
+
 func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]any) {
 	now := time.Now().UTC()
 	m.mu.Lock()
@@ -295,6 +360,15 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 		var cancel context.CancelFunc
 		runCtx, cancel = context.WithTimeout(runCtx, rec.spawnOptions.TaskTimeout)
 		defer cancel()
+	}
+	runCtx, taskCancel := context.WithCancel(runCtx)
+	defer taskCancel()
+	m.mu.Lock()
+	rec.cancelFunc = taskCancel
+	cancelRequested := rec.cancelRequested
+	m.mu.Unlock()
+	if cancelRequested {
+		taskCancel()
 	}
 	runCtx, task := semtrace.NewTaskWithAttrs(runCtx, "TaskManager.runTask", map[string]any{
 		"task_id":                  taskID,
@@ -316,15 +390,21 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 		"function_id":              functionID,
 		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
 	})
-	res, err := m.runFunction(execCtx, fn, input)
+	res, err := m.runFunction(execCtx, taskID, fn, input)
 	execRegion.End()
 
 	end := time.Now().UTC()
 	m.mu.Lock()
 	rec.FinishedAt = &end
+	rec.cancelFunc = nil
 	if err != nil {
-		rec.Status = TaskStatusFailed
-		rec.Error = err.Error()
+		if errors.Is(err, context.Canceled) {
+			rec.Status = TaskStatusCanceled
+			rec.Error = "task canceled"
+		} else {
+			rec.Status = TaskStatusFailed
+			rec.Error = err.Error()
+		}
 	} else {
 		rec.Status = TaskStatusDone
 		rec.Output = cloneMapAny(res.Output)
@@ -333,6 +413,9 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	rec.conversation = cloneConversationMessages(res.Conversation)
 	done := rec.done
 	m.mu.Unlock()
+	if status == TaskStatusCanceled {
+		_, _ = m.Cancel(taskID)
+	}
 	_ = m.persistTask(taskID)
 	if err != nil {
 		semtrace.LogAttrs(runCtx, "lmfunction.error", err.Error(), map[string]any{
@@ -367,7 +450,7 @@ func (m *TaskManager) resolveFunctionInput(functionID string, input map[string]a
 	return fn, cloneMapAny(input), nil
 }
 
-func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[string]any) (RunResult, error) {
+func (m *TaskManager) runFunction(ctx context.Context, parentTaskID string, fn *Function, input map[string]any) (RunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -386,7 +469,9 @@ func (m *TaskManager) runFunction(ctx context.Context, fn *Function, input map[s
 	tcOpts.SQLitePath = m.opts.SQLitePath
 	tcOpts.sqlDB = m.sqlDB
 	tcOpts.registerPump = m.registerPump
-	tcOpts.spawnTask = m.Spawn
+	tcOpts.spawnTask = func(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
+		return m.spawnWithParent(parentTaskID, functionID, input, opts)
+	}
 	tcOpts.lmfTools = m.newLMFunctionTools
 	tcOpts.loadMixin = m.registry.GetMixin
 	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
@@ -550,9 +635,24 @@ func (m *TaskManager) runPumpOnce(runner *pumpRunner) error {
 	return nil
 }
 
-func (m *TaskManager) newRecord(functionID string, input map[string]any, opts SpawnOptions) (string, *taskRecord) {
+func (m *TaskManager) newRecord(parentTaskID string, functionID string, input map[string]any, opts SpawnOptions) (string, *taskRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	parentTaskID = strings.TrimSpace(parentTaskID)
+	if parentTaskID != "" {
+		parent, ok := m.tasks[parentTaskID]
+		if !ok {
+			return "", nil, fmt.Errorf("unknown parent_task_id: %s", parentTaskID)
+		}
+		if parent.cancelRequested {
+			return "", nil, fmt.Errorf("parent task %s is canceled", parentTaskID)
+		}
+		select {
+		case <-parent.done:
+			return "", nil, fmt.Errorf("parent task %s is already complete", parentTaskID)
+		default:
+		}
+	}
 	m.nextID++
 	taskID := fmt.Sprintf("task-%d", m.nextID)
 	now := time.Now().UTC()
@@ -565,10 +665,11 @@ func (m *TaskManager) newRecord(functionID string, input map[string]any, opts Sp
 		},
 		spawnOptions: opts,
 		input:        cloneMapAny(input),
+		parentTaskID: parentTaskID,
 		done:         make(chan struct{}),
 	}
 	m.tasks[taskID] = rec
-	return taskID, rec
+	return taskID, rec, nil
 }
 
 func (m *TaskManager) getRecord(taskID string) (*taskRecord, error) {

@@ -32,13 +32,15 @@ You can call LM Functions via tools:
 - search_lmmixin: discover available LM context mixins by id/when_to_use.
 - load_lmmixin: load a mixin so its content is appended to future NL context.
 - call_lmfunction: start an LM Function task and get a task_id.
-- wait_lmfunction: wait for completion and read task output.
+- wait_lmfunction: wait for completion and read task output; if timeout is hit, you can wait again.
+- kill_lmfunction: cancel a running LM Function task by task_id.
 
 If you feel missing context for a task, aggressively search for LM mixins and load relevant ones before proceeding.
 
 Prefer LM Functions for structured/reusable workflows and use regular coding tools for direct file/command work.`
 	defaultPumpLimit       = 1
 	defaultOutboxPollLimit = 100
+	defaultChatTimeoutSec  = 3600
 	maxOutboxPollLimit     = 500
 	maxPumpLimit           = 200
 	inboundMaxAttempts     = 3
@@ -96,7 +98,7 @@ func recvFunction() *lmfrt.Function {
 				"cwd":         map[string]any{"type": "string"},
 				"model":       map[string]any{"type": "string"},
 				"max_turns":   map[string]any{"type": "integer"},
-				"timeout_sec": map[string]any{"type": "integer"},
+				"timeout_sec": map[string]any{"type": "integer", "description": "Chat processing timeout in seconds. Default is 3600. Set to 0 to disable the per-message timeout (unlimited)."},
 				"temperature": map[string]any{"type": "number"},
 			},
 			"required": []string{"message"},
@@ -539,12 +541,15 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		temperature = baselineagent.DefaultTemperature
 	}
 
-	timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false)
-	if err != nil {
-		return "", nil, err
-	}
-	if timeoutSec <= 0 {
-		timeoutSec = 300
+	timeoutSec := defaultChatTimeoutSec
+	if _, hasTimeout := input["timeout_sec"]; hasTimeout {
+		timeoutSec, err = lmflib.IntInput(input, "timeout_sec", false)
+		if err != nil {
+			return "", nil, err
+		}
+		if timeoutSec < 0 {
+			return "", nil, fmt.Errorf("timeout_sec must be >= 0")
+		}
 	}
 
 	history, err := state.loadConversationHistory(session)
@@ -560,11 +565,15 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		return "", nil, fmt.Errorf("initialize lmfunction tools: %w", err)
 	}
 	tools = append(tools, lmfTools...)
+	conversationTimeout := time.Duration(timeoutSec) * time.Second
+	if timeoutSec == 0 {
+		conversationTimeout = 0
+	}
 	conv, err := baselineagent.NewConversation(apiKey, baselineagent.ConversationConfig{
 		CWD:             absCWD,
 		Model:           model,
 		MaxTurns:        maxTurns,
-		Timeout:         time.Duration(timeoutSec) * time.Second,
+		Timeout:         conversationTimeout,
 		Temperature:     temperature,
 		SystemPrompt:    defaultChatSystemPrompt,
 		Tools:           tools,
@@ -858,9 +867,14 @@ func inboundPumpInputFromRecvInput(input map[string]any) (map[string]any, error)
 	} else if maxTurns > 0 {
 		out["max_turns"] = maxTurns
 	}
-	if timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false); err != nil {
-		return nil, err
-	} else if timeoutSec > 0 {
+	if _, hasTimeout := input["timeout_sec"]; hasTimeout {
+		timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false)
+		if err != nil {
+			return nil, err
+		}
+		if timeoutSec < 0 {
+			return nil, fmt.Errorf("timeout_sec must be >= 0")
+		}
 		out["timeout_sec"] = timeoutSec
 	}
 	if temperature, err := lmflib.FloatInput(input, "temperature", false); err != nil {

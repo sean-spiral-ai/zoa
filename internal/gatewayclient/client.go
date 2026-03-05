@@ -17,7 +17,6 @@ import (
 const (
 	DefaultSession       = "default"
 	DefaultSessionDir    = ".gateway/sessions/default"
-	defaultTimeoutSec    = 300
 	defaultOutboxPollLim = 100
 )
 
@@ -101,8 +100,8 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	}
 
 	timeoutSec := cfg.TimeoutSec
-	if timeoutSec <= 0 {
-		timeoutSec = defaultTimeoutSec
+	if timeoutSec < 0 {
+		return nil, fmt.Errorf("timeout_sec must be >= 0")
 	}
 
 	registry := lmfrt.NewRegistry()
@@ -247,6 +246,12 @@ func runAndWait(taskManager *lmfrt.TaskManager, functionID string, input map[str
 	if snapshot.Status == lmfrt.TaskStatusFailed {
 		if strings.TrimSpace(snapshot.Error) == "" {
 			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+		}
+		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+	}
+	if snapshot.Status == lmfrt.TaskStatusCanceled {
+		if strings.TrimSpace(snapshot.Error) == "" {
+			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s canceled", taskID)
 		}
 		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
 	}
