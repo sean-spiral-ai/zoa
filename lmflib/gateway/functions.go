@@ -90,15 +90,14 @@ func recvFunction() *lmfrt.Function {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"session":           map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
-				"channel":           map[string]any{"type": "string", "description": "Gateway channel URI (for example gatewaychannel://tui or gatewaychannel://slack?channel_id=...)"},
-				"message":           map[string]any{"type": "string", "description": "Raw user message text"},
-				"cwd":               map[string]any{"type": "string"},
-				"model":             map[string]any{"type": "string"},
-				"max_turns":         map[string]any{"type": "integer"},
-				"max_output_tokens": map[string]any{"type": "integer"},
-				"timeout_sec":       map[string]any{"type": "integer"},
-				"temperature":       map[string]any{"type": "number"},
+				"session":     map[string]any{"type": "string", "description": "Gateway session identifier (defaults to default)"},
+				"channel":     map[string]any{"type": "string", "description": "Gateway channel URI (for example gatewaychannel://tui or gatewaychannel://slack?channel_id=...)"},
+				"message":     map[string]any{"type": "string", "description": "Raw user message text"},
+				"cwd":         map[string]any{"type": "string"},
+				"model":       map[string]any{"type": "string"},
+				"max_turns":   map[string]any{"type": "integer"},
+				"timeout_sec": map[string]any{"type": "integer"},
+				"temperature": map[string]any{"type": "number"},
 			},
 			"required": []string{"message"},
 		},
@@ -532,14 +531,6 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 	if maxTurns <= 0 {
 		maxTurns = baselineagent.DefaultMaxTurns
 	}
-	maxOutputTokens, err := lmflib.IntInput(input, "max_output_tokens", false)
-	if err != nil {
-		return "", nil, err
-	}
-	if maxOutputTokens <= 0 {
-		maxOutputTokens = baselineagent.DefaultMaxOutputTokens
-	}
-
 	temperature, err := lmflib.FloatInput(input, "temperature", false)
 	if err != nil {
 		return "", nil, err
@@ -573,7 +564,6 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		CWD:             absCWD,
 		Model:           model,
 		MaxTurns:        maxTurns,
-		MaxOutputTokens: maxOutputTokens,
 		Timeout:         time.Duration(timeoutSec) * time.Second,
 		Temperature:     temperature,
 		SystemPrompt:    defaultChatSystemPrompt,
@@ -867,11 +857,6 @@ func inboundPumpInputFromRecvInput(input map[string]any) (map[string]any, error)
 		return nil, err
 	} else if maxTurns > 0 {
 		out["max_turns"] = maxTurns
-	}
-	if maxOutputTokens, err := lmflib.IntInput(input, "max_output_tokens", false); err != nil {
-		return nil, err
-	} else if maxOutputTokens > 0 {
-		out["max_output_tokens"] = maxOutputTokens
 	}
 	if timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false); err != nil {
 		return nil, err

@@ -16,16 +16,15 @@ import (
 )
 
 type TaskContextOptions struct {
-	APIKey          string
-	CWD             string
-	Model           string
-	MaxTurns        int
-	MaxOutputTokens int
-	Timeout         time.Duration
-	Temperature     float64
-	SQLitePath      string
-	Namespace       string
-	AssetsDir       string
+	APIKey      string
+	CWD         string
+	Model       string
+	MaxTurns    int
+	Timeout     time.Duration
+	Temperature float64
+	SQLitePath  string
+	Namespace   string
+	AssetsDir   string
 
 	logger        *slog.Logger
 	sqlDB         sqlExecutor
@@ -95,13 +94,12 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	}
 
 	baseConfig := baselineagent.ConversationConfig{
-		CWD:             absCWD,
-		Model:           model,
-		MaxTurns:        opts.MaxTurns,
-		MaxOutputTokens: opts.MaxOutputTokens,
-		Timeout:         opts.Timeout,
-		Temperature:     opts.Temperature,
-		Tools:           toolset,
+		CWD:         absCWD,
+		Model:       model,
+		MaxTurns:    opts.MaxTurns,
+		Timeout:     opts.Timeout,
+		Temperature: opts.Temperature,
+		Tools:       toolset,
 	}
 	apiKey, _ := baselineagent.ResolveCredential(opts.APIKey, model)
 	sqlDB := opts.sqlDB

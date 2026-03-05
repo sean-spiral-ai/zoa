@@ -15,9 +15,8 @@ func TestLiveSmokeGemini(t *testing.T) {
 	defer cancel()
 
 	resp, err := client.Complete(ctx, CompletionRequest{
-		Model:           "gemini-3-flash-preview",
-		Messages:        []Message{{Role: RoleUser, Text: "Reply with a short acknowledgement."}},
-		MaxOutputTokens: 256,
+		Model:    "gemini-3-flash-preview",
+		Messages: []Message{{Role: RoleUser, Text: "Reply with a short acknowledgement."}},
 	})
 	if err != nil {
 		t.Fatalf("gemini live smoke failed: %v", err)

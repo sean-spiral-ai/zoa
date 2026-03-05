@@ -54,7 +54,6 @@ func daemonInstall(args []string) int {
 		sessionDir        string
 		model             string
 		maxTurns          int
-		maxOutputTokens   int
 		temperature       float64
 		timeoutSec        int
 		pollMs            int
@@ -76,7 +75,6 @@ func daemonInstall(args []string) int {
 	fs.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	fs.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	fs.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
-	fs.IntVar(&maxOutputTokens, "max-output-tokens", baselineagent.DefaultMaxOutputTokens, "Max model output tokens per completion")
 	fs.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
 	fs.IntVar(&timeoutSec, "timeout", defaultTimeout, "Per-prompt timeout (seconds)")
 	fs.IntVar(&pollMs, "poll-ms", defaultPollMs, "Outbox polling interval in milliseconds")
@@ -94,7 +92,6 @@ func daemonInstall(args []string) int {
 		SessionDir:        sessionDir,
 		Model:             model,
 		MaxTurns:          maxTurns,
-		MaxOutputTokens:   maxOutputTokens,
 		Temperature:       temperature,
 		TimeoutSec:        timeoutSec,
 		PollMs:            pollMs,
@@ -104,7 +101,6 @@ func daemonInstall(args []string) int {
 
 		DefaultModel:             baselineagent.DefaultModel,
 		DefaultMaxTurns:          baselineagent.DefaultMaxTurns,
-		DefaultMaxOutputTokens:   baselineagent.DefaultMaxOutputTokens,
 		DefaultTemperature:       baselineagent.DefaultTemperature,
 		DefaultTimeoutSec:        defaultTimeout,
 		DefaultPollMs:            defaultPollMs,
@@ -167,7 +163,7 @@ func printDaemonUsage() {
 	fmt.Fprintln(os.Stderr, "  zoa daemon logs [-f] [-n N]  Show service logs")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Install flags (same as 'zoa slack'):")
-	fmt.Fprintln(os.Stderr, "  --cwd, --model, --max-turns, --max-output-tokens, --temperature,")
+	fmt.Fprintln(os.Stderr, "  --cwd, --model, --max-turns, --temperature,")
 	fmt.Fprintln(os.Stderr, "  --timeout, --poll-ms, --session-dir, --log-level, --debug-log-component,")
 	fmt.Fprintln(os.Stderr, "  --trace-http-addr")
 }

@@ -49,9 +49,8 @@ func TestLiveSmokeAnthropic(t *testing.T) {
 	defer cancel()
 
 	resp, err := client.Complete(ctx, CompletionRequest{
-		Model:           "claude-opus-4-6",
-		Messages:        []Message{{Role: RoleUser, Text: "Reply with a short acknowledgement."}},
-		MaxOutputTokens: 256,
+		Model:    "claude-opus-4-6",
+		Messages: []Message{{Role: RoleUser, Text: "Reply with a short acknowledgement."}},
 	})
 	if err != nil {
 		t.Fatalf("anthropic live smoke failed: %v", err)

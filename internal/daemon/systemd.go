@@ -20,7 +20,6 @@ type InstallConfig struct {
 	SessionDir        string  // --session-dir
 	Model             string  // --model
 	MaxTurns          int     // --max-turns
-	MaxOutputTokens   int     // --max-output-tokens
 	Temperature       float64 // --temperature
 	TimeoutSec        int     // --timeout
 	PollMs            int     // --poll-ms
@@ -31,7 +30,6 @@ type InstallConfig struct {
 	// Defaults used to suppress flags that match.
 	DefaultModel             string
 	DefaultMaxTurns          int
-	DefaultMaxOutputTokens   int
 	DefaultTemperature       float64
 	DefaultTimeoutSec        int
 	DefaultPollMs            int
@@ -295,7 +293,6 @@ func buildSlackFlags(cfg InstallConfig) string {
 	add("--model", cfg.Model, cfg.DefaultModel)
 	add("--trace-http-addr", cfg.TraceHTTPAddr, cfg.DefaultTraceHTTPAddr)
 	addInt("--max-turns", cfg.MaxTurns, cfg.DefaultMaxTurns)
-	addInt("--max-output-tokens", cfg.MaxOutputTokens, cfg.DefaultMaxOutputTokens)
 	addFloat("--temperature", cfg.Temperature, cfg.DefaultTemperature)
 	addInt("--timeout", cfg.TimeoutSec, cfg.DefaultTimeoutSec)
 	addInt("--poll-ms", cfg.PollMs, cfg.DefaultPollMs)

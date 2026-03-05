@@ -20,7 +20,6 @@ type SessionConfig struct {
 	Tools           []builtintools.Tool
 	Temperature     float64
 	MaxTurns        int
-	MaxOutputTokens int
 	SystemPrompt    string
 	VerboseLog      io.Writer
 	InitialMessages []llm.Message
@@ -40,19 +39,17 @@ type PromptOptions struct {
 }
 
 type Session struct {
-	client          llm.Client
-	model           string
-	registry        *builtintools.Registry
-	temperature     float64
-	maxTurns        int
-	maxOutputTokens int
-	verboseLog      io.Writer
-	messages        []llm.Message
-	tracer          llmtrace.MessageTracer
+	client      llm.Client
+	model       string
+	registry    *builtintools.Registry
+	temperature float64
+	maxTurns    int
+	verboseLog  io.Writer
+	messages    []llm.Message
+	tracer      llmtrace.MessageTracer
 }
 
 const toolArgsTracePreviewMax = 2000
-const defaultMaxOutputTokens = 100000000
 
 func NewSession(cfg SessionConfig) (*Session, error) {
 	if cfg.Client == nil {
@@ -66,9 +63,6 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 	}
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 20
-	}
-	if cfg.MaxOutputTokens <= 0 {
-		cfg.MaxOutputTokens = defaultMaxOutputTokens
 	}
 	if strings.TrimSpace(cfg.SystemPrompt) == "" {
 		cfg.SystemPrompt = DefaultSystemPrompt
@@ -90,15 +84,14 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 	}
 
 	return &Session{
-		client:          cfg.Client,
-		model:           cfg.Model,
-		registry:        builtintools.NewRegistry(cfg.Tools),
-		temperature:     cfg.Temperature,
-		maxTurns:        cfg.MaxTurns,
-		maxOutputTokens: cfg.MaxOutputTokens,
-		verboseLog:      cfg.VerboseLog,
-		messages:        initialMessages,
-		tracer:          cfg.Tracer,
+		client:      cfg.Client,
+		model:       cfg.Model,
+		registry:    builtintools.NewRegistry(cfg.Tools),
+		temperature: cfg.Temperature,
+		maxTurns:    cfg.MaxTurns,
+		verboseLog:  cfg.VerboseLog,
+		messages:    initialMessages,
+		tracer:      cfg.Tracer,
 	}, nil
 }
 
@@ -153,7 +146,6 @@ func (s *Session) PromptWithOptions(ctx context.Context, userPrompt string, opti
 			Messages:         s.messages,
 			Tools:            toolSpecs,
 			Temperature:      s.temperature,
-			MaxOutputTokens:  s.maxOutputTokens,
 			ResponseMimeType: options.ResponseMimeType,
 			ResponseSchema:   cloneMap(options.ResponseSchema),
 		})
