@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"zoa/internal/semtrace"
 )
@@ -25,7 +24,7 @@ type GeminiClient struct {
 func NewGeminiClient(apiKey string) *GeminiClient {
 	return &GeminiClient{
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{},
 		baseURL:    defaultBaseURL,
 	}
 }

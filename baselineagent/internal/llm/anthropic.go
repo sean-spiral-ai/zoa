@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"zoa/internal/semtrace"
 )
@@ -17,7 +16,7 @@ import (
 const anthropicMessagesURL = "https://api.anthropic.com/v1/messages"
 const anthropicVersionHeader = "2023-06-01"
 const anthropicOAuthBetaHeader = "oauth-2025-04-20"
-const defaultAnthropicMaxTokens = 4096
+const defaultAnthropicMaxTokens = 64000
 
 type AnthropicClient struct {
 	oauthToken string
@@ -28,7 +27,7 @@ type AnthropicClient struct {
 func NewAnthropicClientWithOAuthToken(token string) *AnthropicClient {
 	return &AnthropicClient{
 		oauthToken: strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{},
 		url:        anthropicMessagesURL,
 	}
 }

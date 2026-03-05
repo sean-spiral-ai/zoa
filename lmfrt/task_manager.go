@@ -58,6 +58,9 @@ type TaskManagerOptions struct {
 type SpawnOptions struct {
 	// HideInLogByDefault marks this task as hidden from default task log views.
 	HideInLogByDefault bool
+	// TaskTimeout sets a per-task NL execution timeout.
+	// When > 0, it overrides timeout_sec-derived defaults for this spawned task.
+	TaskTimeout time.Duration
 }
 
 type taskRecord struct {
@@ -287,6 +290,11 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	runCtx := m.baseCtx
 	if runCtx == nil {
 		runCtx = context.Background()
+	}
+	if rec.spawnOptions.TaskTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, rec.spawnOptions.TaskTimeout)
+		defer cancel()
 	}
 	runCtx, task := semtrace.NewTaskWithAttrs(runCtx, "TaskManager.runTask", map[string]any{
 		"task_id":                  taskID,
@@ -626,9 +634,6 @@ func taskContextOptionsFromInput(input map[string]any) TaskContextOptions {
 	}
 	if v, ok := numberAsInt(input["max_turns"]); ok {
 		opts.MaxTurns = v
-	}
-	if v, ok := numberAsInt(input["max_output_tokens"]); ok {
-		opts.MaxOutputTokens = v
 	}
 	if v, ok := numberAsInt(input["timeout_sec"]); ok && v > 0 {
 		opts.Timeout = time.Duration(v) * time.Second

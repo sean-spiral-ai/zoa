@@ -3,7 +3,11 @@ package lmfrt
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
@@ -114,5 +118,144 @@ func TestLoadLMMixinLoadsIntoContext(t *testing.T) {
 	}
 	if out != "mixin text" {
 		t.Fatalf("unexpected mixin output: %q", out)
+	}
+}
+
+func TestCallLMFunctionSupportsTaskTimeout(t *testing.T) {
+	registry := NewRegistry()
+	registry.MustRegister(&Function{
+		ID:        "test.call_lmfunction_timeout",
+		WhenToUse: "test only",
+		Exec: func(_ *TaskContext, input map[string]any) (map[string]any, error) {
+			_, hasTimeout := input["timeout_sec"]
+			return map[string]any{
+				"saw_timeout_in_input": hasTimeout,
+			}, nil
+		},
+	})
+	manager, err := NewTaskManager(registry, TaskManagerOptions{
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	tool := &callLMFunctionTool{manager: manager}
+	out, err := tool.Execute(context.Background(), map[string]any{
+		"function_id": "test.call_lmfunction_timeout",
+		"input": map[string]any{
+			"foo": "bar",
+		},
+		"timeout_sec": 1,
+	})
+	if err != nil {
+		t.Fatalf("execute call_lmfunction: %v", err)
+	}
+
+	var payload struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.TaskID == "" {
+		t.Fatalf("missing task_id in payload: %s", out)
+	}
+
+	snapshot, timedOut, err := manager.Wait(payload.TaskID, 3*time.Second)
+	if err != nil {
+		t.Fatalf("wait task: %v", err)
+	}
+	if timedOut {
+		t.Fatalf("wait timed out unexpectedly")
+	}
+	if snapshot.Status != TaskStatusDone {
+		t.Fatalf("expected done status, got %s (%s)", snapshot.Status, snapshot.Error)
+	}
+	if saw, _ := snapshot.Output["saw_timeout_in_input"].(bool); saw {
+		t.Fatalf("timeout_sec leaked into function input")
+	}
+}
+
+func TestCallLMFunctionRejectsNegativeTimeout(t *testing.T) {
+	tool := &callLMFunctionTool{}
+	_, err := tool.Execute(context.Background(), map[string]any{
+		"function_id": "test.any",
+		"timeout_sec": -1,
+	})
+	if err == nil {
+		t.Fatalf("expected timeout validation error")
+	}
+}
+
+func TestCallLMFunctionTimeoutAppliesToWholeTaskDuration(t *testing.T) {
+	registry := NewRegistry()
+	registry.MustRegister(&Function{
+		ID:        "test.call_lmfunction_whole_task_timeout",
+		WhenToUse: "test only",
+		Exec: func(tc *TaskContext, _ map[string]any) (map[string]any, error) {
+			ctx := tc.Context()
+			if _, ok := ctx.Deadline(); !ok {
+				return nil, fmt.Errorf("missing task deadline")
+			}
+			step := func(d time.Duration) error {
+				timer := time.NewTimer(d)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-timer.C:
+					return nil
+				}
+			}
+			if err := step(650 * time.Millisecond); err != nil {
+				return nil, err
+			}
+			if err := step(650 * time.Millisecond); err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	manager, err := NewTaskManager(registry, TaskManagerOptions{
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	tool := &callLMFunctionTool{manager: manager}
+	out, err := tool.Execute(context.Background(), map[string]any{
+		"function_id": "test.call_lmfunction_whole_task_timeout",
+		"timeout_sec": 1,
+	})
+	if err != nil {
+		t.Fatalf("execute call_lmfunction: %v", err)
+	}
+
+	var payload struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.TaskID == "" {
+		t.Fatalf("missing task_id in payload: %s", out)
+	}
+
+	snapshot, timedOut, err := manager.Wait(payload.TaskID, 5*time.Second)
+	if err != nil {
+		t.Fatalf("wait task: %v", err)
+	}
+	if timedOut {
+		t.Fatalf("wait timed out unexpectedly")
+	}
+	if snapshot.Status != TaskStatusFailed {
+		t.Fatalf("expected failed status, got %s", snapshot.Status)
+	}
+	if !strings.Contains(strings.ToLower(snapshot.Error), "deadline exceeded") {
+		t.Fatalf("expected deadline exceeded error, got: %q", snapshot.Error)
 	}
 }

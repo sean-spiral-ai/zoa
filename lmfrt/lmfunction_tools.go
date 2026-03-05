@@ -227,6 +227,7 @@ func (t *callLMFunctionTool) Spec() baselineagent.ToolSpec {
 			"properties": map[string]any{
 				"function_id": map[string]any{"type": "string", "description": "LM Function id"},
 				"input":       map[string]any{"type": "object", "description": "Optional function input object"},
+				"timeout_sec": map[string]any{"type": "integer", "description": "Optional timeout in seconds for the entire spawned task duration; applies across all work in the task"},
 			},
 			"required": []string{"function_id"},
 		},
@@ -238,6 +239,13 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 	if err != nil {
 		return "", err
 	}
+	timeoutSec, err := baselineagent.IntArg(args, "timeout_sec", false)
+	if err != nil {
+		return "", err
+	}
+	if timeoutSec < 0 {
+		return "", fmt.Errorf("timeout_sec must be >= 0")
+	}
 
 	input := map[string]any{}
 	if raw, ok := args["input"]; ok && raw != nil {
@@ -248,7 +256,11 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 		input = cloneMapAny(parsed)
 	}
 
-	taskID, err := t.manager.Spawn(functionID, input, SpawnOptions{})
+	spawnOpts := SpawnOptions{}
+	if timeoutSec > 0 {
+		spawnOpts.TaskTimeout = time.Duration(timeoutSec) * time.Second
+	}
+	taskID, err := t.manager.Spawn(functionID, input, spawnOpts)
 	if err != nil {
 		return "", err
 	}
