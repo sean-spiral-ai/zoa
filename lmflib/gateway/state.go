@@ -275,21 +275,17 @@ func (s *state) claimDueInboundID(session string, now time.Time, leaseDuration t
 
 	var inboundID int64
 	err := s.tc.SqlTx(func(tx *sql.Tx) error {
+		// Strict FIFO: only the head-of-line row (smallest id among pending/processing)
+		// is eligible to be claimed. If the head is not claimable yet, later rows must wait.
 		row := tx.QueryRowContext(
 			s.tc.Context(),
 			`SELECT id
 			 FROM gateway__inbound
 			 WHERE session = ?
-			   AND (
-			       (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
-			       OR
-			       (status = 'processing' AND (lease_until IS NULL OR lease_until <= ?))
-			   )
+			   AND status IN ('pending', 'processing')
 			 ORDER BY id
 			 LIMIT 1`,
 			session,
-			nowText,
-			nowText,
 		)
 		if err := row.Scan(&inboundID); err != nil {
 			if err == sql.ErrNoRows {

@@ -155,6 +155,122 @@ func TestInboundLeaseHeartbeatIntervalClamps(t *testing.T) {
 	}
 }
 
+func TestClaimDueInboundStrictFIFOBlocksBehindProcessingHead(t *testing.T) {
+	st, tc := newGatewayTestState(t)
+	defer func() { _ = tc.Close() }()
+
+	now := time.Now().UTC()
+	firstID, err := st.insertInbound("default", "gatewaychannel://test", "first", nil, now)
+	if err != nil {
+		t.Fatalf("insert first inbound: %v", err)
+	}
+	secondID, err := st.insertInbound("default", "gatewaychannel://test", "second", nil, now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert second inbound: %v", err)
+	}
+
+	first, err := st.claimDueInbound("default", now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim first inbound: %v", err)
+	}
+	if first == nil || first.ID != firstID {
+		t.Fatalf("expected first inbound id %d, got %#v", firstID, first)
+	}
+
+	blocked, err := st.claimDueInbound("default", now.Add(10*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("claim while head processing: %v", err)
+	}
+	if blocked != nil {
+		t.Fatalf("expected no claim while head processing; got id=%d (second id=%d)", blocked.ID, secondID)
+	}
+}
+
+func TestClaimDueInboundStrictFIFOBlocksBehindPendingBackoffHead(t *testing.T) {
+	st, tc := newGatewayTestState(t)
+	defer func() { _ = tc.Close() }()
+
+	now := time.Now().UTC()
+	firstID, err := st.insertInbound("default", "gatewaychannel://test", "first", nil, now)
+	if err != nil {
+		t.Fatalf("insert first inbound: %v", err)
+	}
+	secondID, err := st.insertInbound("default", "gatewaychannel://test", "second", nil, now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert second inbound: %v", err)
+	}
+
+	first, err := st.claimDueInbound("default", now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim first inbound: %v", err)
+	}
+	if first == nil || first.ID != firstID {
+		t.Fatalf("expected first inbound id %d, got %#v", firstID, first)
+	}
+
+	retryAt := now.Add(5 * time.Minute)
+	claimed, err := st.markInboundRetry(first.ID, first.Attempt, "backoff", retryAt)
+	if err != nil {
+		t.Fatalf("mark retry: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected markInboundRetry to claim current attempt")
+	}
+
+	blocked, err := st.claimDueInbound("default", now.Add(time.Minute), time.Minute)
+	if err != nil {
+		t.Fatalf("claim while head pending backoff: %v", err)
+	}
+	if blocked != nil {
+		t.Fatalf("expected no claim while head pending backoff; got id=%d (second id=%d)", blocked.ID, secondID)
+	}
+
+	reclaimed, err := st.claimDueInbound("default", retryAt.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("reclaim head after backoff: %v", err)
+	}
+	if reclaimed == nil || reclaimed.ID != firstID {
+		t.Fatalf("expected reclaimed first inbound id %d, got %#v (second id=%d)", firstID, reclaimed, secondID)
+	}
+}
+
+func TestClaimDueInboundStrictFIFOAdvancesAfterHeadDone(t *testing.T) {
+	st, tc := newGatewayTestState(t)
+	defer func() { _ = tc.Close() }()
+
+	now := time.Now().UTC()
+	firstID, err := st.insertInbound("default", "gatewaychannel://test", "first", nil, now)
+	if err != nil {
+		t.Fatalf("insert first inbound: %v", err)
+	}
+	secondID, err := st.insertInbound("default", "gatewaychannel://test", "second", nil, now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert second inbound: %v", err)
+	}
+
+	first, err := st.claimDueInbound("default", now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim first inbound: %v", err)
+	}
+	if first == nil || first.ID != firstID {
+		t.Fatalf("expected first inbound id %d, got %#v", firstID, first)
+	}
+
+	if _, claimed, err := st.completeInboundSuccess("default", first.Channel, "ok", first.ID, first.Attempt, now.Add(time.Second)); err != nil {
+		t.Fatalf("complete first inbound: %v", err)
+	} else if !claimed {
+		t.Fatalf("expected completeInboundSuccess to claim current attempt")
+	}
+
+	second, err := st.claimDueInbound("default", now.Add(2*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("claim second inbound after first done: %v", err)
+	}
+	if second == nil || second.ID != secondID {
+		t.Fatalf("expected second inbound id %d, got %#v", secondID, second)
+	}
+}
+
 func newGatewayTestState(t *testing.T) (*state, *lmfrt.TaskContext) {
 	t.Helper()
 	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
