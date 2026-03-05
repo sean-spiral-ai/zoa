@@ -41,6 +41,7 @@ Prefer LM Functions for structured/reusable workflows and use regular coding too
 	defaultOutboxPollLimit = 100
 	maxOutboxPollLimit     = 500
 	maxPumpLimit           = 200
+	inboundMaxAttempts     = 3
 	inboundLeaseDuration   = 2 * time.Minute
 	defaultTraceControlURL = "http://127.0.0.1:3008"
 )
@@ -231,11 +232,12 @@ func pumpFunction() *lmfrt.Function {
 type inboundPumpJob struct {
 	row   *inboundRow
 	reply string
+	delta []baselineagent.ConversationMessage
 }
 
 func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
 	return &reliable.JobCompleter[inboundPumpJob]{
-		MaxAttempts: 3,
+		MaxAttempts: inboundMaxAttempts,
 		Logger:      slog.Default().With("component", "inbound_pump", "session", session),
 		ClaimDue: func(_ context.Context, now time.Time) (*reliable.ClaimedJob[inboundPumpJob], error) {
 			row, err := state.claimDueInbound(session, now, inboundLeaseDuration)
@@ -289,7 +291,7 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 				}
 			}()
 
-			reply, err := processInboundMessage(state, tc, job.Value.row)
+			reply, delta, err := processInboundMessage(state, tc, job.Value.row)
 			close(heartbeatStop)
 			select {
 			case <-leaseLost:
@@ -297,9 +299,11 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			default:
 			}
 			if err != nil {
+				job.Value.delta = delta
 				return err
 			}
 			job.Value.reply = reply
+			job.Value.delta = delta
 			return nil
 		},
 		Complete: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time) error {
@@ -309,6 +313,9 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			}
 			if !claimed {
 				return nil
+			}
+			if len(job.Value.delta) > 0 {
+				_ = state.appendConversationMessages(session, job.Value.delta, now)
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -336,6 +343,9 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			}
 			if !claimed {
 				return nil
+			}
+			if len(job.Value.delta) > 0 {
+				_ = state.appendConversationMessages(session, job.Value.delta, now)
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -466,12 +476,13 @@ func outboxMaxIDFunction() *lmfrt.Function {
 	}
 }
 
-func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow) (string, error) {
+func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow) (string, []baselineagent.ConversationMessage, error) {
 	if row == nil {
-		return "", fmt.Errorf("inbound row is nil")
+		return "", nil, fmt.Errorf("inbound row is nil")
 	}
 	if strings.HasPrefix(strings.TrimSpace(row.Text), "/") {
-		return renderSlashResponse(state, tc, row.Session, row.Text)
+		reply, err := renderSlashResponse(state, tc, row.Session, row.Text)
+		return reply, nil, err
 	}
 	input := cloneMapAnyLocal(row.PumpInput)
 	if input == nil {
@@ -480,42 +491,42 @@ func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow)
 	return processChatMessage(state, tc, input, row.Session, row.Text)
 }
 
-func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]any, session string, message string) (string, error) {
+func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]any, session string, message string) (string, []baselineagent.ConversationMessage, error) {
 	model, err := lmflib.StringInput(input, "model", false)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if strings.TrimSpace(model) == "" {
 		model = baselineagent.DefaultModel
 	}
 	model = strings.TrimSpace(model)
 	if !baselineagent.IsSupportedModel(model) {
-		return "", fmt.Errorf("unsupported model %q", model)
+		return "", nil, fmt.Errorf("unsupported model %q", model)
 	}
 
 	apiKey, ok := baselineagent.ResolveCredential("", model)
 	if !ok {
-		return "", fmt.Errorf("%s is required", baselineagent.RequiredCredentialEnvVarForModel(model))
+		return "", nil, fmt.Errorf("%s is required", baselineagent.RequiredCredentialEnvVarForModel(model))
 	}
 
 	cwd, err := lmflib.StringInput(input, "cwd", false)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if strings.TrimSpace(cwd) == "" {
 		cwd, err = os.Getwd()
 		if err != nil {
-			return "", fmt.Errorf("resolve cwd: %w", err)
+			return "", nil, fmt.Errorf("resolve cwd: %w", err)
 		}
 	}
 	absCWD, err := filepath.Abs(cwd)
 	if err != nil {
-		return "", fmt.Errorf("resolve absolute cwd: %w", err)
+		return "", nil, fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 
 	maxTurns, err := lmflib.IntInput(input, "max_turns", false)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if maxTurns <= 0 {
 		maxTurns = baselineagent.DefaultMaxTurns
@@ -523,7 +534,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 
 	temperature, err := lmflib.FloatInput(input, "temperature", false)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if temperature == 0 {
 		temperature = baselineagent.DefaultTemperature
@@ -531,7 +542,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 
 	timeoutSec, err := lmflib.IntInput(input, "timeout_sec", false)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if timeoutSec <= 0 {
 		timeoutSec = 300
@@ -539,15 +550,15 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 
 	history, err := state.loadConversationHistory(session)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	tools, err := baselineagent.NewBuiltinCodingTools(absCWD)
 	if err != nil {
-		return "", fmt.Errorf("initialize builtin tools: %w", err)
+		return "", nil, fmt.Errorf("initialize builtin tools: %w", err)
 	}
 	lmfTools, err := tc.NewLmFunctionTools()
 	if err != nil {
-		return "", fmt.Errorf("initialize lmfunction tools: %w", err)
+		return "", nil, fmt.Errorf("initialize lmfunction tools: %w", err)
 	}
 	tools = append(tools, lmfTools...)
 	conv, err := baselineagent.NewConversation(apiKey, baselineagent.ConversationConfig{
@@ -562,7 +573,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		Tracer:          newTracerFromStore(tc.LLMTraceStore()),
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	promptCtx := tc.Context()
@@ -571,20 +582,19 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 	}
 	historyLen := len(history)
 	res, err := conv.Prompt(promptCtx, message)
-	if err != nil {
-		return "", err
-	}
-
-	// Persist new messages (everything after the initial history).
+	var delta []baselineagent.ConversationMessage
 	if full := conv.History(); len(full) > historyLen {
-		_ = state.appendConversationMessages(session, full[historyLen:], time.Now().UTC())
+		delta = full[historyLen:]
+	}
+	if err != nil {
+		return "", delta, err
 	}
 
 	text := strings.TrimSpace(res.FinalResponse)
 	if text == "" {
 		text = "(no response)"
 	}
-	return text, nil
+	return text, delta, nil
 }
 
 func renderSlashResponse(state *state, tc *lmfrt.TaskContext, session string, text string) (string, error) {
@@ -806,6 +816,9 @@ func isRetryableInboundError(err error) bool {
 		return true
 	}
 	if strings.Contains(text, "timeout") {
+		return true
+	}
+	if strings.Contains(text, "deadline exceeded") {
 		return true
 	}
 	if strings.Contains(text, "temporar") {
