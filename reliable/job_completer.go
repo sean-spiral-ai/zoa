@@ -65,8 +65,8 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 		ctx = context.Background()
 	}
 	log := c.logger()
-	now := time.Now().UTC()
-	job, err := c.ClaimDue(ctx, now)
+	claimNow := time.Now().UTC()
+	job, err := c.ClaimDue(ctx, claimNow)
 	if err != nil {
 		return JobOutcome{}, err
 	}
@@ -82,6 +82,7 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 	log.Debug("job claimed", "job_id", job.ID, "attempt", job.Attempt)
 
 	if err := c.Handle(ctx, job); err != nil {
+		callbackNow := time.Now().UTC()
 		if c.ShouldRetry(err) && (c.MaxAttempts <= 0 || job.Attempt < c.MaxAttempts) {
 			delay := time.Duration(0)
 			if c.Backoff != nil {
@@ -96,7 +97,7 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 				"delay", delay,
 				"error", err,
 			)
-			if retryErr := c.Retry(ctx, job, now, err, delay); retryErr != nil {
+			if retryErr := c.Retry(ctx, job, callbackNow, err, delay); retryErr != nil {
 				return outcome, retryErr
 			}
 			return outcome, nil
@@ -106,7 +107,7 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 			"attempt", job.Attempt,
 			"error", err,
 		)
-		if failErr := c.Fail(ctx, job, now, err); failErr != nil {
+		if failErr := c.Fail(ctx, job, callbackNow, err); failErr != nil {
 			return outcome, failErr
 		}
 		return outcome, nil
@@ -119,7 +120,8 @@ func (c *JobCompleter[T]) CompleteOne(ctx context.Context) (JobOutcome, error) {
 		)
 	}
 
-	if err := c.Complete(ctx, job, now); err != nil {
+	completeNow := time.Now().UTC()
+	if err := c.Complete(ctx, job, completeNow); err != nil {
 		return outcome, err
 	}
 	return outcome, nil

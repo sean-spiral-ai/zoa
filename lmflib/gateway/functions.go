@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -43,6 +44,8 @@ Prefer LM Functions for structured/reusable workflows and use regular coding too
 	inboundLeaseDuration   = 2 * time.Minute
 	defaultTraceControlURL = "http://127.0.0.1:3008"
 )
+
+var errInboundLeaseLost = errors.New("inbound lease lost")
 
 func initFunction() *lmfrt.Function {
 	return &lmfrt.Function{
@@ -251,7 +254,48 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			}, nil
 		},
 		Handle: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob]) error {
+			heartbeatStop := make(chan struct{})
+			leaseLost := make(chan struct{}, 1)
+			heartbeatInterval := inboundLeaseHeartbeatInterval(inboundLeaseDuration)
+			go func() {
+				if heartbeatInterval <= 0 {
+					return
+				}
+				ticker := time.NewTicker(heartbeatInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-heartbeatStop:
+						return
+					case <-ticker.C:
+						renewed, err := state.renewInboundLease(job.ID, job.Attempt, time.Now().UTC(), inboundLeaseDuration)
+						if err != nil {
+							slog.Warn("inbound lease heartbeat failed",
+								"session", session,
+								"inbound_id", job.ID,
+								"attempt", job.Attempt,
+								"error", err,
+							)
+							continue
+						}
+						if !renewed {
+							select {
+							case leaseLost <- struct{}{}:
+							default:
+							}
+							return
+						}
+					}
+				}
+			}()
+
 			reply, err := processInboundMessage(state, tc, job.Value.row)
+			close(heartbeatStop)
+			select {
+			case <-leaseLost:
+				return errInboundLeaseLost
+			default:
+			}
 			if err != nil {
 				return err
 			}
@@ -259,12 +303,12 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			return nil
 		},
 		Complete: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time) error {
-			outboxID, err := state.insertOutbox(session, job.Value.row.Channel, job.Value.reply, &job.ID, now)
+			outboxID, claimed, err := state.completeInboundSuccess(session, job.Value.row.Channel, job.Value.reply, job.ID, job.Attempt, now)
 			if err != nil {
 				return err
 			}
-			if err := state.markInboundDone(job.ID, now); err != nil {
-				return err
+			if !claimed {
+				return nil
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -272,16 +316,26 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 			return nil
 		},
 		Retry: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error, delay time.Duration) error {
-			return state.markInboundRetry(job.ID, cause.Error(), now.Add(delay))
-		},
-		Fail: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error) error {
-			reply := fmt.Sprintf("Failed to process message %d: %v", job.ID, cause)
-			outboxID, err := state.insertOutbox(session, job.Value.row.Channel, reply, &job.ID, now)
+			claimed, err := state.markInboundRetry(job.ID, job.Attempt, cause.Error(), now.Add(delay))
 			if err != nil {
 				return err
 			}
-			if err := state.markInboundFailed(job.ID, cause.Error(), now); err != nil {
+			if !claimed {
+				return nil
+			}
+			return nil
+		},
+		Fail: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time, cause error) error {
+			if errors.Is(cause, errInboundLeaseLost) {
+				return nil
+			}
+			reply := fmt.Sprintf("Failed to process message %d: %v", job.ID, cause)
+			outboxID, claimed, err := state.completeInboundFailure(session, job.Value.row.Channel, reply, job.ID, job.Attempt, now, cause.Error())
+			if err != nil {
 				return err
+			}
+			if !claimed {
+				return nil
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -505,7 +559,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 		SystemPrompt:    defaultChatSystemPrompt,
 		Tools:           tools,
 		InitialMessages: history,
-		Tracer: newTracerFromStore(tc.LLMTraceStore()),
+		Tracer:          newTracerFromStore(tc.LLMTraceStore()),
 	})
 	if err != nil {
 		return "", err
@@ -721,6 +775,20 @@ func inboundRetryBackoff(attempt int) time.Duration {
 	default:
 		return 30 * time.Second
 	}
+}
+
+func inboundLeaseHeartbeatInterval(leaseDuration time.Duration) time.Duration {
+	if leaseDuration <= 0 {
+		return 0
+	}
+	interval := leaseDuration / 3
+	if interval < 5*time.Second {
+		return 5 * time.Second
+	}
+	if interval > 30*time.Second {
+		return 30 * time.Second
+	}
+	return interval
 }
 
 func isRetryableInboundError(err error) bool {

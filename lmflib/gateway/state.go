@@ -376,45 +376,176 @@ func (s *state) inboundByID(inboundID int64) (*inboundRow, error) {
 	}, nil
 }
 
-func (s *state) markInboundDone(inboundID int64, at time.Time) error {
-	_, err := s.tc.SqlExec(
+func (s *state) renewInboundLease(inboundID int64, attempt int, now time.Time, leaseDuration time.Duration) (bool, error) {
+	if leaseDuration <= 0 {
+		leaseDuration = time.Minute
+	}
+	res, err := s.tc.SqlExec(
 		`UPDATE gateway__inbound
-		 SET status = 'done', processed_at = ?, error_text = NULL, lease_until = NULL
-		 WHERE id = ?`,
-		at.UTC().Format(time.RFC3339Nano),
+		 SET lease_until = ?
+		 WHERE id = ?
+		   AND status = 'processing'
+		   AND attempt_count = ?`,
+		now.UTC().Add(leaseDuration).Format(time.RFC3339Nano),
 		inboundID,
+		attempt,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return res.RowsAffected > 0, nil
 }
 
-func (s *state) markInboundRetry(inboundID int64, errorText string, nextAttemptAt time.Time) error {
-	_, err := s.tc.SqlExec(
+func (s *state) markInboundRetry(inboundID int64, attempt int, errorText string, nextAttemptAt time.Time) (bool, error) {
+	res, err := s.tc.SqlExec(
 		`UPDATE gateway__inbound
 		 SET status = 'pending',
 		     next_attempt_at = ?,
 		     lease_until = NULL,
+		     processed_at = NULL,
 		     error_text = ?
-		 WHERE id = ?`,
+		 WHERE id = ?
+		   AND status = 'processing'
+		   AND attempt_count = ?`,
 		nextAttemptAt.UTC().Format(time.RFC3339Nano),
 		strings.TrimSpace(errorText),
 		inboundID,
+		attempt,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return res.RowsAffected > 0, nil
 }
 
-func (s *state) markInboundFailed(inboundID int64, errorText string, at time.Time) error {
-	_, err := s.tc.SqlExec(
-		`UPDATE gateway__inbound
-		 SET status = 'failed',
-		     processed_at = ?,
-		     lease_until = NULL,
-		     error_text = ?
-		 WHERE id = ?`,
-		at.UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(errorText),
-		inboundID,
+func (s *state) completeInboundSuccess(session, channel, reply string, inboundID int64, attempt int, at time.Time) (int64, bool, error) {
+	var (
+		outboxID int64
+		claimed  bool
 	)
-	return err
+	err := s.tc.SqlTx(func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			s.sqlContext(),
+			`UPDATE gateway__inbound
+			 SET status = 'done',
+			     processed_at = ?,
+			     error_text = NULL,
+			     lease_until = NULL
+			 WHERE id = ?
+			   AND status = 'processing'
+			   AND attempt_count = ?`,
+			at.UTC().Format(time.RFC3339Nano),
+			inboundID,
+			attempt,
+		)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return nil
+		}
+		claimed = true
+
+		id, err := s.txInsertOutbox(tx, session, channel, reply, &inboundID, at)
+		if err != nil {
+			return err
+		}
+		outboxID = id
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return outboxID, claimed, nil
+}
+
+func (s *state) completeInboundFailure(session, channel, failureText string, inboundID int64, attempt int, at time.Time, errorText string) (int64, bool, error) {
+	var (
+		outboxID int64
+		claimed  bool
+	)
+	err := s.tc.SqlTx(func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			s.sqlContext(),
+			`UPDATE gateway__inbound
+			 SET status = 'failed',
+			     processed_at = ?,
+			     lease_until = NULL,
+			     error_text = ?
+			 WHERE id = ?
+			   AND status = 'processing'
+			   AND attempt_count = ?`,
+			at.UTC().Format(time.RFC3339Nano),
+			strings.TrimSpace(errorText),
+			inboundID,
+			attempt,
+		)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return nil
+		}
+		claimed = true
+
+		id, err := s.txInsertOutbox(tx, session, channel, failureText, &inboundID, at)
+		if err != nil {
+			return err
+		}
+		outboxID = id
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return outboxID, claimed, nil
+}
+
+func (s *state) txInsertOutbox(tx *sql.Tx, session, channel, text string, inReplyTo *int64, at time.Time) (int64, error) {
+	if tx == nil {
+		return 0, fmt.Errorf("tx is required")
+	}
+	channel = strings.TrimSpace(channel)
+	var (
+		res sql.Result
+		err error
+	)
+	if inReplyTo == nil {
+		res, err = tx.ExecContext(
+			s.sqlContext(),
+			`INSERT INTO gateway__outbox(session, channel, text, in_reply_to, sent_at) VALUES (?, ?, ?, NULL, ?)`,
+			session, channel, text, at.UTC().Format(time.RFC3339Nano),
+		)
+	} else {
+		res, err = tx.ExecContext(
+			s.sqlContext(),
+			`INSERT INTO gateway__outbox(session, channel, text, in_reply_to, sent_at) VALUES (?, ?, ?, ?, ?)`,
+			session, channel, text, *inReplyTo, at.UTC().Format(time.RFC3339Nano),
+		)
+	}
+	if err != nil {
+		return 0, err
+	}
+	lastInsertID, err := res.LastInsertId()
+	if err != nil {
+		return 0, nil
+	}
+	return lastInsertID, nil
+}
+
+func (s *state) sqlContext() context.Context {
+	if s != nil && s.tc != nil && s.tc.Context() != nil {
+		return s.tc.Context()
+	}
+	return context.Background()
 }
 
 func (s *state) insertOutbox(session, channel, text string, inReplyTo *int64, at time.Time) (int64, error) {
