@@ -16,42 +16,43 @@ import (
 )
 
 type TaskContextOptions struct {
-	APIKey      string
-	CWD         string
-	Model       string
-	MaxTurns    int
-	Timeout     time.Duration
-	Temperature float64
-	SQLitePath  string
-	Namespace   string
-	AssetsDir   string
+	APIKey          string
+	CWD             string
+	Model           string
+	MaxTurns        int
+	MaxOutputTokens int
+	Timeout         time.Duration
+	Temperature     float64
+	SQLitePath      string
+	Namespace       string
+	AssetsDir       string
 
-	logger         *slog.Logger
-	sqlDB          sqlExecutor
-	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools       func() ([]baselineagent.Tool, error)
-	loadMixin      func(id string) (*Mixin, bool)
-	llmtraceStore  *llmtrace.Store
+	logger        *slog.Logger
+	sqlDB         sqlExecutor
+	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools      func() ([]baselineagent.Tool, error)
+	loadMixin     func(id string) (*Mixin, bool)
+	llmtraceStore *llmtrace.Store
 }
 
 type TaskContext struct {
-	ctx            context.Context
-	logger         *slog.Logger
-	apiKey         string
-	baseConfig     baselineagent.ConversationConfig
-	mainConv       baselineagent.Conversation
-	sqlDB          sqlExecutor
-	ownsSQL        bool
-	namespace      string
-	sqlitePath     string
-	assetsDir      string
-	tmpDirs        []string
-	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools       func() ([]baselineagent.Tool, error)
-	loadMixin      func(id string) (*Mixin, bool)
-	llmtraceStore  *llmtrace.Store
+	ctx           context.Context
+	logger        *slog.Logger
+	apiKey        string
+	baseConfig    baselineagent.ConversationConfig
+	mainConv      baselineagent.Conversation
+	sqlDB         sqlExecutor
+	ownsSQL       bool
+	namespace     string
+	sqlitePath    string
+	assetsDir     string
+	tmpDirs       []string
+	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools      func() ([]baselineagent.Tool, error)
+	loadMixin     func(id string) (*Mixin, bool)
+	llmtraceStore *llmtrace.Store
 }
 
 type SqlExecResult struct {
@@ -94,12 +95,13 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	}
 
 	baseConfig := baselineagent.ConversationConfig{
-		CWD:         absCWD,
-		Model:       model,
-		MaxTurns:    opts.MaxTurns,
-		Timeout:     opts.Timeout,
-		Temperature: opts.Temperature,
-		Tools:       toolset,
+		CWD:             absCWD,
+		Model:           model,
+		MaxTurns:        opts.MaxTurns,
+		MaxOutputTokens: opts.MaxOutputTokens,
+		Timeout:         opts.Timeout,
+		Temperature:     opts.Temperature,
+		Tools:           toolset,
 	}
 	apiKey, _ := baselineagent.ResolveCredential(opts.APIKey, model)
 	sqlDB := opts.sqlDB

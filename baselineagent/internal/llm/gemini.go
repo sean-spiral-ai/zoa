@@ -39,6 +39,7 @@ type geminiGenerateRequest struct {
 
 type geminiGenerationConfig struct {
 	Temperature      float64        `json:"temperature,omitempty"`
+	MaxOutputTokens  int            `json:"maxOutputTokens,omitempty"`
 	ResponseMimeType string         `json:"responseMimeType,omitempty"`
 	ResponseSchema   map[string]any `json:"responseSchema,omitempty"`
 }
@@ -110,10 +111,11 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 	endAttrs := map[string]any{}
 	defer func() { traceRegion.EndWithAttrs(endAttrs) }()
 	semtrace.LogAttrs(ctx, "llm", "gemini request", map[string]any{
-		"provider": "gemini",
-		"model":    model,
-		"messages": len(req.Messages),
-		"tools":    len(req.Tools),
+		"provider":          "gemini",
+		"model":             model,
+		"messages":          len(req.Messages),
+		"tools":             len(req.Tools),
+		"max_output_tokens": req.MaxOutputTokens,
 	})
 
 	if len(req.Messages) == 0 {
@@ -133,9 +135,10 @@ func (c *GeminiClient) Complete(ctx context.Context, req CompletionRequest) (Com
 			Parts: []geminiPart{{Text: system}},
 		}
 	}
-	if req.Temperature > 0 || strings.TrimSpace(req.ResponseMimeType) != "" || req.ResponseSchema != nil {
+	if req.Temperature > 0 || req.MaxOutputTokens > 0 || strings.TrimSpace(req.ResponseMimeType) != "" || req.ResponseSchema != nil {
 		payload.GenerationConfig = &geminiGenerationConfig{
 			Temperature:      req.Temperature,
+			MaxOutputTokens:  req.MaxOutputTokens,
 			ResponseMimeType: strings.TrimSpace(req.ResponseMimeType),
 			ResponseSchema:   req.ResponseSchema,
 		}

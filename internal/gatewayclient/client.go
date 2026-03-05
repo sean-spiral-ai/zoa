@@ -30,14 +30,15 @@ type GatewayClient interface {
 }
 
 type LocalConfig struct {
-	Session       string
-	SessionDir    string
-	CWD           string
-	Model         string
-	MaxTurns      int
-	Temperature   float64
-	TimeoutSec    int
-	LLMTraceStore *llmtrace.Store
+	Session         string
+	SessionDir      string
+	CWD             string
+	Model           string
+	MaxTurns        int
+	MaxOutputTokens int
+	Temperature     float64
+	TimeoutSec      int
+	LLMTraceStore   *llmtrace.Store
 }
 
 type EnqueueResult struct {
@@ -95,6 +96,10 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	if maxTurns <= 0 {
 		maxTurns = baselineagent.DefaultMaxTurns
 	}
+	maxOutputTokens := cfg.MaxOutputTokens
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = baselineagent.DefaultMaxOutputTokens
+	}
 
 	temperature := cfg.Temperature
 	if temperature == 0 {
@@ -136,12 +141,13 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 		taskManager: taskManager,
 		session:     session,
 		recvDefaults: map[string]any{
-			"session":     session,
-			"cwd":         cwd,
-			"model":       model,
-			"max_turns":   maxTurns,
-			"timeout_sec": timeoutSec,
-			"temperature": temperature,
+			"session":           session,
+			"cwd":               cwd,
+			"model":             model,
+			"max_turns":         maxTurns,
+			"max_output_tokens": maxOutputTokens,
+			"timeout_sec":       timeoutSec,
+			"temperature":       temperature,
 		},
 	}, nil
 }

@@ -50,6 +50,7 @@ type CompletionRequest struct {
 	Messages         []Message
 	Tools            []ToolSpec
 	Temperature      float64
+	MaxOutputTokens  int
 	ResponseMimeType string
 	ResponseSchema   map[string]any
 }

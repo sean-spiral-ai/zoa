@@ -1,6 +1,11 @@
 package llm
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestToAnthropicMessagesToolUseIncludesEmptyInputObject(t *testing.T) {
 	_, out := toAnthropicMessages([]Message{
@@ -33,5 +38,25 @@ func TestToAnthropicMessagesToolUseIncludesEmptyInputObject(t *testing.T) {
 	}
 	if len(part.Input) != 0 {
 		t.Fatalf("expected empty input object, got %#v", part.Input)
+	}
+}
+
+func TestLiveSmokeAnthropic(t *testing.T) {
+	token := requireLiveProviderToken(t, "ANTHROPIC_OAUTH_TOKEN")
+
+	client := NewAnthropicClientWithOAuthToken(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	resp, err := client.Complete(ctx, CompletionRequest{
+		Model:           "claude-opus-4-6",
+		Messages:        []Message{{Role: RoleUser, Text: "Reply with a short acknowledgement."}},
+		MaxOutputTokens: 256,
+	})
+	if err != nil {
+		t.Fatalf("anthropic live smoke failed: %v", err)
+	}
+	if strings.TrimSpace(resp.Text) == "" && len(resp.ToolCalls) == 0 {
+		t.Fatalf("anthropic returned empty response")
 	}
 }

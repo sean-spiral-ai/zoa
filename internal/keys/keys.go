@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -74,6 +75,73 @@ func Resolve(explicit string, envVars ...string) string {
 		}
 	}
 	return ""
+}
+
+// ResolveWithNearestDotEnv resolves credentials in this order:
+// explicit value, process environment, then nearest .env walking upward from cwd.
+func ResolveWithNearestDotEnv(explicit string, envVars ...string) string {
+	if val := Resolve(explicit, envVars...); val != "" {
+		return val
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, ".env")
+		for _, envVar := range envVars {
+			envVar = strings.TrimSpace(envVar)
+			if envVar == "" {
+				continue
+			}
+			if value, ok := readDotEnvKey(candidate, envVar); ok {
+				return value
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func readDotEnvKey(path string, key string) (string, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:eq])
+		if name != key {
+			continue
+		}
+		rawValue := strings.TrimSpace(line[eq+1:])
+		value, err := parseDotEnvValue(rawValue)
+		if err != nil {
+			return "", false
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", false
+		}
+		return strings.TrimSpace(value), true
+	}
+	return "", false
 }
 
 func parseDotEnvValue(raw string) (string, error) {

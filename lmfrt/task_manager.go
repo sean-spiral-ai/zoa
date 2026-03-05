@@ -627,6 +627,9 @@ func taskContextOptionsFromInput(input map[string]any) TaskContextOptions {
 	if v, ok := numberAsInt(input["max_turns"]); ok {
 		opts.MaxTurns = v
 	}
+	if v, ok := numberAsInt(input["max_output_tokens"]); ok {
+		opts.MaxOutputTokens = v
+	}
 	if v, ok := numberAsInt(input["timeout_sec"]); ok && v > 0 {
 		opts.Timeout = time.Duration(v) * time.Second
 	}

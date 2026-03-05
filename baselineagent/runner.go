@@ -8,11 +8,12 @@ import (
 )
 
 const (
-	DefaultGeminiModel    = ModelGemini3FlashPreview
-	DefaultAnthropicModel = ModelClaudeOpus46
-	DefaultModel          = DefaultAnthropicModel
-	DefaultTemperature    = 0.2
-	DefaultMaxTurns       = 100
+	DefaultGeminiModel     = ModelGemini3FlashPreview
+	DefaultAnthropicModel  = ModelClaudeOpus46
+	DefaultModel           = DefaultAnthropicModel
+	DefaultTemperature     = 0.2
+	DefaultMaxTurns        = 100000
+	DefaultMaxOutputTokens = 100000000
 )
 
 type RunConfig struct {
@@ -20,6 +21,7 @@ type RunConfig struct {
 	Instruction     string
 	Model           string
 	MaxTurns        int
+	MaxOutputTokens int
 	Timeout         time.Duration
 	Temperature     float64
 	VerboseLog      io.Writer
@@ -55,6 +57,7 @@ func (r *defaultRunner) Run(ctx context.Context, cfg RunConfig) (RunResult, erro
 		CWD:             cfg.CWD,
 		Model:           cfg.Model,
 		MaxTurns:        cfg.MaxTurns,
+		MaxOutputTokens: cfg.MaxOutputTokens,
 		Timeout:         cfg.Timeout,
 		Temperature:     cfg.Temperature,
 		VerboseLog:      cfg.VerboseLog,

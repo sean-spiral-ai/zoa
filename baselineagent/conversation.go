@@ -16,6 +16,7 @@ type ConversationConfig struct {
 	CWD             string
 	Model           string
 	MaxTurns        int
+	MaxOutputTokens int
 	Timeout         time.Duration
 	Temperature     float64
 	VerboseLog      io.Writer
@@ -128,6 +129,10 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 	if maxTurns <= 0 {
 		maxTurns = DefaultMaxTurns
 	}
+	maxOutputTokens := cfg.MaxOutputTokens
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = DefaultMaxOutputTokens
+	}
 	temperature := cfg.Temperature
 	if temperature == 0 {
 		temperature = DefaultTemperature
@@ -153,6 +158,7 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		Tools:           toolset,
 		Temperature:     temperature,
 		MaxTurns:        maxTurns,
+		MaxOutputTokens: maxOutputTokens,
 		SystemPrompt:    systemPrompt,
 		VerboseLog:      cfg.VerboseLog,
 		InitialMessages: toLLMMessages(cfg.InitialMessages),

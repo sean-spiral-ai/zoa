@@ -114,10 +114,11 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 	endAttrs := map[string]any{}
 	defer func() { traceRegion.EndWithAttrs(endAttrs) }()
 	semtrace.LogAttrs(ctx, "llm", "anthropic request", map[string]any{
-		"provider": "anthropic",
-		"model":    model,
-		"messages": len(req.Messages),
-		"tools":    len(req.Tools),
+		"provider":          "anthropic",
+		"model":             model,
+		"messages":          len(req.Messages),
+		"tools":             len(req.Tools),
+		"max_output_tokens": req.MaxOutputTokens,
 	})
 
 	if strings.TrimSpace(c.oauthToken) == "" {
@@ -248,9 +249,13 @@ func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequ
 		return anthropicMessagesRequest{}, errors.New("no user/assistant/tool messages to send")
 	}
 
+	maxTokens := req.MaxOutputTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultAnthropicMaxTokens
+	}
 	payload := anthropicMessagesRequest{
 		Model:     strings.TrimSpace(req.Model),
-		MaxTokens: defaultAnthropicMaxTokens,
+		MaxTokens: maxTokens,
 		System:    system,
 		Messages:  messages,
 	}

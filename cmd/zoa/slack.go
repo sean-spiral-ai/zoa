@@ -26,15 +26,16 @@ func runSlack(args []string) int {
 	slackFlags.SetOutput(os.Stderr)
 
 	var (
-		cwd           string
-		sessionDir    string
-		model         string
-		maxTurns      int
-		temperature   float64
-		timeoutSec    int
-		pollMs        int
-		traceHTTPAddr string
-		llmtraceAddr  string
+		cwd             string
+		sessionDir      string
+		model           string
+		maxTurns        int
+		maxOutputTokens int
+		temperature     float64
+		timeoutSec      int
+		pollMs          int
+		traceHTTPAddr   string
+		llmtraceAddr    string
 
 		appTokenFlag      string
 		botTokenFlag      string
@@ -48,6 +49,7 @@ func runSlack(args []string) int {
 	slackFlags.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
 	slackFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
 	slackFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
+	slackFlags.IntVar(&maxOutputTokens, "max-output-tokens", baselineagent.DefaultMaxOutputTokens, "Max model output tokens per completion")
 	slackFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
 	slackFlags.IntVar(&timeoutSec, "timeout", 300, "Per-prompt timeout (seconds)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
@@ -153,14 +155,15 @@ func runSlack(args []string) int {
 	}
 
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:       gatewayclient.DefaultSession,
-		SessionDir:    sessionDir,
-		CWD:           cwd,
-		Model:         model,
-		MaxTurns:      maxTurns,
-		Temperature:   temperature,
-		TimeoutSec:    timeoutSec,
-		LLMTraceStore: traceStore,
+		Session:         gatewayclient.DefaultSession,
+		SessionDir:      sessionDir,
+		CWD:             cwd,
+		Model:           model,
+		MaxTurns:        maxTurns,
+		MaxOutputTokens: maxOutputTokens,
+		Temperature:     temperature,
+		TimeoutSec:      timeoutSec,
+		LLMTraceStore:   traceStore,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing gateway client: %v\n", err)
