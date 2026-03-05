@@ -20,12 +20,12 @@ func NewWriteTool(paths *PathResolver) *WriteTool {
 func (t *WriteTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "write",
-		Description: "Write a file. Creates parent directories and overwrites existing content.",
+		Description: "Write a file. You MUST provide both `path` and `content`. `content` must be the complete desired file text (not a diff, not omitted). Creates parent directories and overwrites existing content.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path":    map[string]any{"type": "string", "description": "File path, relative to workspace root"},
-				"content": map[string]any{"type": "string", "description": "Full file content"},
+				"content": map[string]any{"type": "string", "description": "Required. Full file content to write."},
 			},
 			"required": []string{"path", "content"},
 		},

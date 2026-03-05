@@ -80,6 +80,49 @@ Lifecycle: `zoa daemon start|stop|restart|status|logs [-f]`
 
 Debug tip: use `zoa daemon logs` to find the crash/time window, then run `zoa inspect --session-dir .gateway/sessions/default sql "<SQL>"` to correlate it with `gateway__inbound`, `gateway__conversation_event`, and `lmfrt__task_log`.
 
+## Conversation Branch Debugging
+
+When two hashes appear to "branch" (same `parent_hash`), debug in this order:
+
+1. Confirm the branch in `llmtrace_node`.
+```bash
+go run ./cmd/zoa -- inspect --sqlite-path .gateway/sessions/default/llmtrace.db sql \
+  "SELECT id,hash,parent_hash,role,created_at FROM llmtrace_node WHERE hash IN ('<hash_a>','<hash_b>');"
+```
+2. Walk descendants from each candidate root to see which nodes belong to each attempt.
+```bash
+go run ./cmd/zoa -- inspect --sqlite-path .gateway/sessions/default/llmtrace.db sql \
+  "WITH RECURSIVE tree(hash,parent_hash,id,role,created_at,depth) AS (
+     SELECT hash,parent_hash,id,role,created_at,0 FROM llmtrace_node WHERE hash IN ('<hash_a>','<hash_b>')
+     UNION ALL
+     SELECT n.hash,n.parent_hash,n.id,n.role,n.created_at,tree.depth+1
+     FROM llmtrace_node n JOIN tree ON n.parent_hash=tree.hash WHERE tree.depth < 12
+   )
+   SELECT id,hash,parent_hash,role,created_at,depth FROM tree ORDER BY created_at,id;"
+```
+3. Correlate with gateway retry/lease state in `state.db`.
+```bash
+go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default sql \
+  "SELECT id,received_at,status,attempt_count,next_attempt_at,lease_until,processed_at,error_text
+   FROM gateway__inbound ORDER BY id;"
+```
+4. Correlate with runtime task execution (`gateway.recv` / `gateway.pump`).
+```bash
+go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default sql \
+  "SELECT task_id,function_id,status,created_at,started_at,finished_at,
+          json_extract(output_json,'$.processed') AS processed,
+          json_extract(output_json,'$.last_inbound_id') AS last_inbound_id,
+          substr(coalesce(error_text,''),1,200) AS err
+   FROM lmfrt__task_log
+   WHERE function_id IN ('gateway.recv','gateway.pump')
+   ORDER BY created_at DESC LIMIT 200;"
+```
+
+Interpretation rules:
+- Same `parent_hash` for two `assistant` nodes usually means replay/retry from the same conversation head, not necessarily two different inbound messages.
+- A `tool` error node deep in one branch can explain why that attempt failed, but branching often happens later when the inbound is retried after lease/deadline handling.
+- If `state.db` is busy (`SQLITE_BUSY`), copy it to `/tmp` and inspect the copy.
+
 ## Tests
 
 Run all tests with:
