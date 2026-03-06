@@ -255,15 +255,18 @@ func (m *TaskManager) Init() error {
 }
 
 func (m *TaskManager) Wait(taskID string, timeout time.Duration) (TaskSnapshot, bool, error) {
-	rec, err := m.getRecord(taskID)
+	rec, ok, err := m.liveRecord(taskID)
 	if err != nil {
 		return TaskSnapshot{}, false, err
+	}
+	if !ok {
+		snap, err := m.Get(taskID)
+		return snap, false, err
 	}
 
 	if timeout <= 0 {
 		<-rec.done
-		snap, getErr := m.Get(taskID)
-		return snap, false, getErr
+		return m.snapshotFromLiveRecord(rec), false, nil
 	}
 
 	timer := time.NewTimer(timeout)
@@ -271,18 +274,24 @@ func (m *TaskManager) Wait(taskID string, timeout time.Duration) (TaskSnapshot, 
 
 	select {
 	case <-rec.done:
-		snap, getErr := m.Get(taskID)
-		return snap, false, getErr
+		return m.snapshotFromLiveRecord(rec), false, nil
 	case <-timer.C:
-		snap, getErr := m.Get(taskID)
-		return snap, true, getErr
+		return m.snapshotFromLiveRecord(rec), true, nil
 	}
 }
 
 func (m *TaskManager) Get(taskID string) (TaskSnapshot, error) {
-	rec, err := m.getRecord(taskID)
+	rec, ok, err := m.liveRecord(taskID)
 	if err != nil {
 		return TaskSnapshot{}, err
+	}
+	if !ok {
+		record, err := m.taskLog.Get(taskID)
+		if err != nil {
+			return TaskSnapshot{}, err
+		}
+		record.Output = cloneMapAny(record.Output)
+		return record.TaskSnapshot, nil
 	}
 
 	m.mu.RLock()
@@ -290,6 +299,14 @@ func (m *TaskManager) Get(taskID string) (TaskSnapshot, error) {
 	clone := rec.TaskSnapshot
 	clone.Output = cloneMapAny(clone.Output)
 	return clone, nil
+}
+
+func (m *TaskManager) snapshotFromLiveRecord(rec *taskRecord) TaskSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	clone := rec.TaskSnapshot
+	clone.Output = cloneMapAny(clone.Output)
+	return clone
 }
 
 func (m *TaskManager) Cancel(taskID string) (bool, error) {
@@ -300,7 +317,14 @@ func (m *TaskManager) Cancel(taskID string) (bool, error) {
 	_, ok := m.tasks[taskID]
 	if !ok {
 		m.mu.Unlock()
-		return false, fmt.Errorf("unknown task_id: %s", taskID)
+		snap, err := m.Get(taskID)
+		if err != nil {
+			return false, err
+		}
+		if snap.Status == TaskStatusRunning {
+			return false, fmt.Errorf("unknown task_id: %s", taskID)
+		}
+		return false, nil
 	}
 	toCancel := make([]context.CancelFunc, 0)
 	anyCanceled := false
@@ -434,6 +458,9 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 
 	m.logger.Debug("task finished", "task_id", taskID, "function_id", functionID, "status", status, "duration", end.Sub(now))
 	close(done)
+	m.mu.Lock()
+	delete(m.tasks, taskID)
+	m.mu.Unlock()
 }
 
 func (m *TaskManager) resolveFunctionInput(functionID string, input map[string]any) (*Function, map[string]any, error) {
@@ -672,17 +699,17 @@ func (m *TaskManager) newRecord(parentTaskID string, functionID string, input ma
 	return taskID, rec, nil
 }
 
-func (m *TaskManager) getRecord(taskID string) (*taskRecord, error) {
+func (m *TaskManager) liveRecord(taskID string) (*taskRecord, bool, error) {
 	if taskID == "" {
-		return nil, fmt.Errorf("task_id cannot be empty")
+		return nil, false, fmt.Errorf("task_id cannot be empty")
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rec, ok := m.tasks[taskID]
 	if !ok {
-		return nil, fmt.Errorf("unknown task_id: %s", taskID)
+		return nil, false, nil
 	}
-	return rec, nil
+	return rec, true, nil
 }
 
 func (m *TaskManager) persistTask(taskID string) error {

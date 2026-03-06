@@ -135,3 +135,57 @@ func TestTaskLogStateHideByDefaultFilter(t *testing.T) {
 		t.Fatalf("expected 2 summaries with hidden included, got %d", len(withHidden))
 	}
 }
+
+func TestTaskLogStateGet(t *testing.T) {
+	tc, err := NewTaskContext(context.Background(), TaskContextOptions{
+		CWD:        t.TempDir(),
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task context: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	state := LogState(tc)
+	if err := state.Init(); err != nil {
+		t.Fatalf("init task log state: %v", err)
+	}
+
+	now := time.Now().UTC()
+	startedAt := now.Add(time.Second)
+	finishedAt := startedAt.Add(time.Second)
+	record := TaskLogRecord{
+		TaskSnapshot: TaskSnapshot{
+			TaskID:     "task-get",
+			FunctionID: "test.get",
+			Status:     TaskStatusDone,
+			CreatedAt:  now,
+			StartedAt:  &startedAt,
+			FinishedAt: &finishedAt,
+			Output:     map[string]any{"ok": true},
+		},
+		Input:         map[string]any{"name": "value"},
+		HideByDefault: true,
+		UpdatedAt:     finishedAt,
+	}
+	if err := state.upsert(record); err != nil {
+		t.Fatalf("upsert record: %v", err)
+	}
+
+	got, err := state.Get(record.TaskID)
+	if err != nil {
+		t.Fatalf("get record: %v", err)
+	}
+	if got.TaskID != record.TaskID || got.FunctionID != record.FunctionID || got.Status != TaskStatusDone {
+		t.Fatalf("unexpected snapshot: %#v", got.TaskSnapshot)
+	}
+	if got.Output["ok"] != true {
+		t.Fatalf("unexpected output: %#v", got.Output)
+	}
+	if got.Input["name"] != "value" {
+		t.Fatalf("unexpected input: %#v", got.Input)
+	}
+	if !got.HideByDefault {
+		t.Fatalf("expected hide_by_default=true")
+	}
+}

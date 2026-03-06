@@ -43,6 +43,58 @@ func TestTaskManagerCancelDoneTaskReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestTaskManagerCompletedTaskRemovedFromMemory(t *testing.T) {
+	registry := NewRegistry()
+	registry.MustRegister(&Function{
+		ID:        "test.completed.cleanup",
+		WhenToUse: "test only",
+		Exec: func(_ *TaskContext, _ map[string]any) (map[string]any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	manager, err := NewTaskManager(registry, TaskManagerOptions{
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	taskID, err := manager.Spawn("test.completed.cleanup", map[string]any{}, SpawnOptions{})
+	if err != nil {
+		t.Fatalf("spawn task: %v", err)
+	}
+	snapshot, timedOut, err := manager.Wait(taskID, 2*time.Second)
+	if err != nil {
+		t.Fatalf("wait task: %v", err)
+	}
+	if timedOut {
+		t.Fatalf("wait timed out unexpectedly")
+	}
+	if snapshot.Status != TaskStatusDone {
+		t.Fatalf("expected done status, got %s", snapshot.Status)
+	}
+
+	mgr := manager
+	mgr.mu.RLock()
+	_, ok := mgr.tasks[taskID]
+	mgr.mu.RUnlock()
+	if ok {
+		t.Fatalf("expected completed task to be removed from in-memory map")
+	}
+
+	got, err := manager.Get(taskID)
+	if err != nil {
+		t.Fatalf("get task after cleanup: %v", err)
+	}
+	if got.Status != TaskStatusDone {
+		t.Fatalf("expected persisted done status, got %s", got.Status)
+	}
+	if got.Output["ok"] != true {
+		t.Fatalf("unexpected output after cleanup: %#v", got.Output)
+	}
+}
+
 func TestTaskManagerCancelUnknownTask(t *testing.T) {
 	manager, err := NewTaskManager(NewRegistry(), TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),

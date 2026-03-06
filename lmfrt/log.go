@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	baselineagent "zoa/baselineagent"
 )
 
 type TaskLogSummary struct {
@@ -100,6 +102,26 @@ func (s *TaskLogState) Summaries(limit int, onlyRunning bool, includeHidden bool
 		})
 	}
 	return items, nil
+}
+
+func (s *TaskLogState) Get(taskID string) (TaskLogRecord, error) {
+	if err := s.ensureInitialized(); err != nil {
+		return TaskLogRecord{}, err
+	}
+	rows, err := s.query(
+		`SELECT task_id, function_id, status, created_at, started_at, finished_at,
+			output_json, error_text, hide_by_default, input_json, conversation_json, updated_at
+		FROM lmfrt__task_log
+		WHERE task_id = ?`,
+		taskID,
+	)
+	if err != nil {
+		return TaskLogRecord{}, err
+	}
+	if len(rows) == 0 {
+		return TaskLogRecord{}, fmt.Errorf("unknown task_id: %s", taskID)
+	}
+	return taskLogRecordFromRow(rows[0])
 }
 
 func (s *TaskLogState) upsert(record TaskLogRecord) error {
@@ -263,6 +285,83 @@ func int64FromValueDefault(v any) int64 {
 	default:
 		return 0
 	}
+}
+
+func taskLogRecordFromRow(row map[string]any) (TaskLogRecord, error) {
+	taskID, _ := row["task_id"].(string)
+	functionID, _ := row["function_id"].(string)
+	statusText, _ := row["status"].(string)
+	errorText, _ := row["error_text"].(string)
+	hideByDefault := int64FromValueDefault(row["hide_by_default"]) != 0
+
+	createdAt, err := parseOptionalTimestamp(row["created_at"])
+	if err != nil || createdAt == nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s created_at: %w", taskID, err)
+	}
+	startedAt, err := parseOptionalTimestamp(row["started_at"])
+	if err != nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s started_at: %w", taskID, err)
+	}
+	finishedAt, err := parseOptionalTimestamp(row["finished_at"])
+	if err != nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s finished_at: %w", taskID, err)
+	}
+	updatedAt, err := parseOptionalTimestamp(row["updated_at"])
+	if err != nil || updatedAt == nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s updated_at: %w", taskID, err)
+	}
+
+	var output map[string]any
+	if err := decodeJSONValue(row["output_json"], &output); err != nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s output_json: %w", taskID, err)
+	}
+	var input map[string]any
+	if err := decodeJSONValue(row["input_json"], &input); err != nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s input_json: %w", taskID, err)
+	}
+	var conversation []baselineagent.ConversationMessage
+	if err := decodeJSONValue(row["conversation_json"], &conversation); err != nil {
+		return TaskLogRecord{}, fmt.Errorf("decode task %s conversation_json: %w", taskID, err)
+	}
+
+	return TaskLogRecord{
+		TaskSnapshot: TaskSnapshot{
+			TaskID:     taskID,
+			FunctionID: functionID,
+			Status:     TaskStatus(strings.TrimSpace(statusText)),
+			CreatedAt:  *createdAt,
+			StartedAt:  startedAt,
+			FinishedAt: finishedAt,
+			Output:     output,
+			Error:      errorText,
+		},
+		Input:         input,
+		Conversation:  conversation,
+		HideByDefault: hideByDefault,
+		UpdatedAt:     *updatedAt,
+	}, nil
+}
+
+func parseOptionalTimestamp(v any) (*time.Time, error) {
+	text, _ := v.(string)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	ts, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return nil, err
+	}
+	return &ts, nil
+}
+
+func decodeJSONValue(v any, dst any) error {
+	text, _ := v.(string)
+	text = strings.TrimSpace(text)
+	if text == "" || text == "null" {
+		return nil
+	}
+	return json.Unmarshal([]byte(text), dst)
 }
 
 func quoteSQLiteIdentifier(name string) string {
