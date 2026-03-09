@@ -6,7 +6,9 @@ import (
 	"io"
 	"time"
 
+	"zoa/llm"
 	topmodel "zoa/model"
+	tools "zoa/tools"
 )
 
 const (
@@ -26,8 +28,8 @@ type RunConfig struct {
 	Temperature     float64
 	VerboseLog      io.Writer
 	SystemPrompt    string
-	Tools           []Tool
-	InitialMessages []ConversationMessage
+	Tools           []tools.Tool
+	InitialMessages []llm.Message
 }
 
 type RunResult struct {

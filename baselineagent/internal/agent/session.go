@@ -8,16 +8,16 @@ import (
 	"log/slog"
 	"strings"
 
-	builtintools "zoa/baselineagent/builtintools"
-	"zoa/baselineagent/internal/llm"
 	"zoa/internal/llmtrace"
 	"zoa/internal/semtrace"
+	"zoa/llm"
+	tools "zoa/tools"
 )
 
 type SessionConfig struct {
 	Client          llm.Client
 	Model           string
-	Tools           []builtintools.Tool
+	Tools           []tools.Tool
 	Temperature     float64
 	MaxTurns        int
 	SystemPrompt    string
@@ -41,7 +41,7 @@ type PromptOptions struct {
 type Session struct {
 	client      llm.Client
 	model       string
-	registry    *builtintools.Registry
+	registry    *tools.Registry
 	temperature float64
 	maxTurns    int
 	verboseLog  io.Writer
@@ -86,7 +86,7 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 	return &Session{
 		client:      cfg.Client,
 		model:       cfg.Model,
-		registry:    builtintools.NewRegistry(cfg.Tools),
+		registry:    tools.NewRegistry(cfg.Tools),
 		temperature: cfg.Temperature,
 		maxTurns:    cfg.MaxTurns,
 		verboseLog:  cfg.VerboseLog,

@@ -5,34 +5,35 @@ import (
 	"testing"
 
 	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 )
 
 type stubConversation struct {
-	history []baselineagent.ConversationMessage
+	history []llm.Message
 }
 
 func (s *stubConversation) Prompt(_ context.Context, _ string) (baselineagent.RunResult, error) {
 	return baselineagent.RunResult{}, nil
 }
 
-func (s *stubConversation) PromptStructured(_ context.Context, _ string, _ baselineagent.StructuredResponseFormat) (baselineagent.RunResult, error) {
+func (s *stubConversation) PromptStructured(_ context.Context, _ string, _ llm.StructuredResponseFormat) (baselineagent.RunResult, error) {
 	return baselineagent.RunResult{}, nil
 }
 
-func (s *stubConversation) AppendMessages(messages []baselineagent.ConversationMessage) error {
+func (s *stubConversation) AppendMessages(messages []llm.Message) error {
 	s.history = append(s.history, messages...)
 	return nil
 }
 
 func (s *stubConversation) Fork() baselineagent.Conversation {
 	out := &stubConversation{
-		history: append([]baselineagent.ConversationMessage(nil), s.history...),
+		history: append([]llm.Message(nil), s.history...),
 	}
 	return out
 }
 
-func (s *stubConversation) History() []baselineagent.ConversationMessage {
-	return append([]baselineagent.ConversationMessage(nil), s.history...)
+func (s *stubConversation) History() []llm.Message {
+	return append([]llm.Message(nil), s.history...)
 }
 
 func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
@@ -61,7 +62,7 @@ func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
 		t.Fatalf("expected 2 appended messages, got %d", len(conv.history))
 	}
 	for i, msg := range conv.history {
-		if msg.Role != baselineagent.RoleUser {
+		if msg.Role != llm.RoleUser {
 			t.Fatalf("message[%d] role=%s, want user", i, msg.Role)
 		}
 		if msg.Text != "important reference context" {

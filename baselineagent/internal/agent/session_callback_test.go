@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	builtintools "zoa/baselineagent/builtintools"
-	"zoa/baselineagent/internal/llm"
 	"zoa/internal/llmtrace"
+	"zoa/llm"
+	tools "zoa/tools"
 )
 
 type testLLMClient struct {
@@ -73,7 +73,7 @@ func TestTracerReceivesMessagesIncrementally(t *testing.T) {
 	session, err := NewSession(SessionConfig{
 		Client:       client,
 		Model:        "test-model",
-		Tools:        []builtintools.Tool{echoTool{}},
+		Tools:        []tools.Tool{echoTool{}},
 		MaxTurns:     3,
 		SystemPrompt: "sys",
 		Tracer:       llmtrace.NewTracer(store),

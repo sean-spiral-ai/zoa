@@ -2,14 +2,17 @@ package baselineagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"zoa/baselineagent/internal/agent"
-	"zoa/baselineagent/internal/llm"
 	"zoa/internal/llmtrace"
+	"zoa/llm"
+	modelpkg "zoa/model"
+	tools "zoa/tools"
 )
 
 type ConversationConfig struct {
@@ -20,17 +23,17 @@ type ConversationConfig struct {
 	Temperature     float64
 	VerboseLog      io.Writer
 	SystemPrompt    string
-	Tools           []Tool
-	InitialMessages []ConversationMessage
+	Tools           []tools.Tool
+	InitialMessages []llm.Message
 	Tracer          llmtrace.MessageTracer
 }
 
 type Conversation interface {
 	Prompt(ctx context.Context, instruction string) (RunResult, error)
-	PromptStructured(ctx context.Context, instruction string, format StructuredResponseFormat) (RunResult, error)
-	AppendMessages(messages []ConversationMessage) error
+	PromptStructured(ctx context.Context, instruction string, format llm.StructuredResponseFormat) (RunResult, error)
+	AppendMessages(messages []llm.Message) error
 	Fork() Conversation
-	History() []ConversationMessage
+	History() []llm.Message
 }
 
 type defaultConversation struct {
@@ -53,7 +56,7 @@ func (c *defaultConversation) Prompt(ctx context.Context, instruction string) (R
 func (c *defaultConversation) PromptStructured(
 	ctx context.Context,
 	instruction string,
-	format StructuredResponseFormat,
+	format llm.StructuredResponseFormat,
 ) (RunResult, error) {
 	if format == nil {
 		return RunResult{}, fmt.Errorf("structured response format cannot be nil")
@@ -93,16 +96,16 @@ func (c *defaultConversation) Fork() Conversation {
 	}
 }
 
-func (c *defaultConversation) AppendMessages(messages []ConversationMessage) error {
+func (c *defaultConversation) AppendMessages(messages []llm.Message) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	c.session.AppendMessages(toLLMMessages(messages))
+	c.session.AppendMessages(cloneMessages(messages))
 	return nil
 }
 
-func (c *defaultConversation) History() []ConversationMessage {
-	return fromLLMMessages(c.session.Messages())
+func (c *defaultConversation) History() []llm.Message {
+	return cloneMessages(c.session.Messages())
 }
 
 func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, time.Duration, error) {
@@ -115,22 +118,22 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
-		model = DefaultModel
+		model = modelpkg.DefaultModel
 	}
-	if !IsSupportedModel(model) {
-		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(SupportedModelNames(), ", "))
+	if !modelpkg.IsSupportedModel(model) {
+		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(modelpkg.SupportedModelNames(), ", "))
 	}
-	provider := InferProviderFromModel(model)
+	provider := modelpkg.InferProviderFromModel(model)
 	if !provider.Valid() {
-		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(SupportedModelNames(), ", "))
+		return nil, 0, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(modelpkg.SupportedModelNames(), ", "))
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
-		maxTurns = DefaultMaxTurns
+		maxTurns = modelpkg.DefaultMaxTurns
 	}
 	temperature := cfg.Temperature
 	if temperature == 0 {
-		temperature = DefaultTemperature
+		temperature = modelpkg.DefaultTemperature
 	}
 
 	if len(cfg.Tools) == 0 {
@@ -155,7 +158,7 @@ func newAgentSession(apiKey string, cfg ConversationConfig) (*agent.Session, tim
 		MaxTurns:        maxTurns,
 		SystemPrompt:    systemPrompt,
 		VerboseLog:      cfg.VerboseLog,
-		InitialMessages: toLLMMessages(cfg.InitialMessages),
+		InitialMessages: cloneMessages(cfg.InitialMessages),
 		Tracer:          cfg.Tracer,
 	})
 	if err != nil {
@@ -174,4 +177,30 @@ func newLLMClient(provider Provider, credential string) (llm.Client, error) {
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", provider)
 	}
+}
+
+func countToolCalls(messages []llm.Message) int {
+	total := 0
+	for _, msg := range messages {
+		total += len(msg.ToolCalls)
+	}
+	return total
+}
+
+func cloneMessages(in []llm.Message) []llm.Message {
+	if in == nil {
+		return nil
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		out := make([]llm.Message, len(in))
+		copy(out, in)
+		return out
+	}
+	var out []llm.Message
+	if err := json.Unmarshal(b, &out); err != nil {
+		out = make([]llm.Message, len(in))
+		copy(out, in)
+	}
+	return out
 }
