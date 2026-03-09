@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 	"zoa/lmflib"
 	"zoa/runtime"
 )
@@ -169,7 +169,7 @@ func (s *state) migrateConversationSnapshot(now time.Time) error {
 		return nil
 	}
 
-	var history []baselineagent.ConversationMessage
+	var history []llm.Message
 	if err := json.Unmarshal([]byte(raw), &history); err != nil {
 		return fmt.Errorf("decode legacy gateway conversation snapshot: %w", err)
 	}
@@ -697,12 +697,12 @@ func (s *state) processingCount(session string) (int64, error) {
 	return int64FromValueDefault(queryRes.Rows[0]["c"]), nil
 }
 
-func (s *state) loadConversationHistory(session string) ([]baselineagent.ConversationMessage, error) {
+func (s *state) loadConversationHistory(session string) ([]llm.Message, error) {
 	queryRes, err := s.tc.SqlQuery(queryConversationEventsBySession, session)
 	if err != nil {
 		return nil, err
 	}
-	history := make([]baselineagent.ConversationMessage, 0, len(queryRes.Rows))
+	history := make([]llm.Message, 0, len(queryRes.Rows))
 	for _, item := range queryRes.Rows {
 		raw, _ := item["message_json"].(string)
 		msg, ok, err := decodeConversationMessage(raw)
@@ -717,19 +717,19 @@ func (s *state) loadConversationHistory(session string) ([]baselineagent.Convers
 	return history, nil
 }
 
-func decodeConversationMessage(raw string) (baselineagent.ConversationMessage, bool, error) {
+func decodeConversationMessage(raw string) (llm.Message, bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return baselineagent.ConversationMessage{}, false, nil
+		return llm.Message{}, false, nil
 	}
-	var msg baselineagent.ConversationMessage
+	var msg llm.Message
 	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-		return baselineagent.ConversationMessage{}, false, fmt.Errorf("decode gateway conversation event: %w", err)
+		return llm.Message{}, false, fmt.Errorf("decode gateway conversation event: %w", err)
 	}
 	return msg, true, nil
 }
 
-func (s *state) appendConversationMessages(session string, messages []baselineagent.ConversationMessage, at time.Time) error {
+func (s *state) appendConversationMessages(session string, messages []llm.Message, at time.Time) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -758,8 +758,8 @@ func (s *state) appendConversationMessages(session string, messages []baselineag
 	})
 }
 
-func (s *state) appendConversationMessage(session string, message baselineagent.ConversationMessage, at time.Time) error {
-	return s.appendConversationMessages(session, []baselineagent.ConversationMessage{message}, at)
+func (s *state) appendConversationMessage(session string, message llm.Message, at time.Time) error {
+	return s.appendConversationMessages(session, []llm.Message{message}, at)
 }
 
 func int64FromValueDefault(v any) int64 {

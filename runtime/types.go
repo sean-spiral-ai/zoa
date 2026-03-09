@@ -1,6 +1,6 @@
 package runtime
 
-import baselineagent "zoa/baselineagent"
+import "zoa/llm"
 
 type ExecFunc func(tc *TaskContext, input map[string]any) (map[string]any, error)
 
@@ -21,9 +21,9 @@ type Function struct {
 }
 
 type RunResult struct {
-	FunctionID   string                              `json:"function_id"`
-	Output       map[string]any                      `json:"output,omitempty"`
-	Conversation []baselineagent.ConversationMessage `json:"-"`
+	FunctionID   string         `json:"function_id"`
+	Output       map[string]any `json:"output,omitempty"`
+	Conversation []llm.Message  `json:"-"`
 }
 
 type Mixin struct {

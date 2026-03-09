@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
 	"zoa/internal/llmtrace"
 	slackbridge "zoa/internal/slack"
+	modelpkg "zoa/model"
 )
 
 func runSlack(args []string) int {
@@ -46,9 +46,9 @@ func runSlack(args []string) int {
 	slackFlags.StringVar(&debugLogComponent, "debug-log-component", "", "When set, only DEBUG logs with this component are emitted")
 	slackFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	slackFlags.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
-	slackFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
-	slackFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
-	slackFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
+	slackFlags.StringVar(&model, "model", modelpkg.DefaultModel, "Model identifier")
+	slackFlags.IntVar(&maxTurns, "max-turns", modelpkg.DefaultMaxTurns, "Max model turns per prompt")
+	slackFlags.Float64Var(&temperature, "temperature", modelpkg.DefaultTemperature, "Model temperature")
 	slackFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	slackFlags.StringVar(&traceHTTPAddr, "trace-http-addr", "127.0.0.1:3008", "runtime trace control HTTP listen address (empty to disable)")
@@ -100,21 +100,21 @@ func runSlack(args []string) int {
 	}
 
 	if strings.TrimSpace(model) == "" {
-		model = baselineagent.DefaultModel
+		model = modelpkg.DefaultModel
 	}
 	model = strings.TrimSpace(model)
-	if !baselineagent.IsSupportedModel(model) {
+	if !modelpkg.IsSupportedModel(model) {
 		fmt.Fprintf(
 			os.Stderr,
 			"error: unsupported model %q (supported: %s)\n",
 			model,
-			strings.Join(baselineagent.SupportedModelNames(), ", "),
+			strings.Join(modelpkg.SupportedModelNames(), ", "),
 		)
 		return 1
 	}
-	_, ok := baselineagent.ResolveCredential("", model)
+	_, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		envVar := baselineagent.RequiredCredentialEnvVarForModel(model)
+		envVar := modelpkg.RequiredCredentialEnvVarForModel(model)
 		fmt.Fprintf(
 			os.Stderr,
 			"warning: %s is not set; non-slash chat messages will fail until configured\n",

@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/internal/llmtrace"
 	diverseideation "zoa/lmflib/diverse_ideation"
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
 	mdtopdf "zoa/lmflib/md_to_pdf"
+	modelpkg "zoa/model"
 	"zoa/runtime"
 )
 
@@ -75,13 +75,13 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
-		model = baselineagent.DefaultModel
+		model = modelpkg.DefaultModel
 	}
-	if !baselineagent.IsSupportedModel(model) {
+	if !modelpkg.IsSupportedModel(model) {
 		return nil, fmt.Errorf(
 			"unsupported model %q (supported: %s)",
 			model,
-			strings.Join(baselineagent.SupportedModelNames(), ", "),
+			strings.Join(modelpkg.SupportedModelNames(), ", "),
 		)
 	}
 
@@ -92,11 +92,11 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
-		maxTurns = baselineagent.DefaultMaxTurns
+		maxTurns = modelpkg.DefaultMaxTurns
 	}
 	temperature := cfg.Temperature
 	if temperature == 0 {
-		temperature = baselineagent.DefaultTemperature
+		temperature = modelpkg.DefaultTemperature
 	}
 
 	timeoutSec := cfg.TimeoutSec

@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/internal/daemon"
 	"zoa/internal/gatewayclient"
+	modelpkg "zoa/model"
 )
 
 func runDaemon(args []string) int {
@@ -73,9 +73,9 @@ func daemonInstall(args []string) int {
 	fs.StringVar(&traceHTTPAddr, "trace-http-addr", defaultTraceHTTPAddr, "runtime trace control HTTP listen address for zoa slack (empty to disable)")
 	fs.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	fs.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
-	fs.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
-	fs.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
-	fs.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
+	fs.StringVar(&model, "model", modelpkg.DefaultModel, "Model identifier")
+	fs.IntVar(&maxTurns, "max-turns", modelpkg.DefaultMaxTurns, "Max model turns per prompt")
+	fs.Float64Var(&temperature, "temperature", modelpkg.DefaultTemperature, "Model temperature")
 	fs.IntVar(&timeoutSec, "timeout", defaultTimeout, "Per-prompt timeout in seconds (0 disables timeout)")
 	fs.IntVar(&pollMs, "poll-ms", defaultPollMs, "Outbox polling interval in milliseconds")
 
@@ -99,9 +99,9 @@ func daemonInstall(args []string) int {
 		DebugLogComponent: debugLogComponent,
 		TraceHTTPAddr:     traceHTTPAddr,
 
-		DefaultModel:             baselineagent.DefaultModel,
-		DefaultMaxTurns:          baselineagent.DefaultMaxTurns,
-		DefaultTemperature:       baselineagent.DefaultTemperature,
+		DefaultModel:             modelpkg.DefaultModel,
+		DefaultMaxTurns:          modelpkg.DefaultMaxTurns,
+		DefaultTemperature:       modelpkg.DefaultTemperature,
 		DefaultTimeoutSec:        defaultTimeout,
 		DefaultPollMs:            defaultPollMs,
 		DefaultLogLevel:          defaultLogLevel,

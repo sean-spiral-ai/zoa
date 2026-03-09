@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,8 +28,8 @@ func TestDebugGetConversation(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 
-	msg := baselineagent.ConversationMessage{
-		Role: baselineagent.RoleUser,
+	msg := llm.Message{
+		Role: llm.RoleUser,
 		Text: "hello",
 	}
 	data, err := json.Marshal(msg)
@@ -57,7 +57,7 @@ func TestDebugGetConversation(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event for default session, got %d", len(events))
 	}
-	if got := string(events[0].Message.Role); got != string(baselineagent.RoleUser) {
+	if got := string(events[0].Message.Role); got != string(llm.RoleUser) {
 		t.Fatalf("unexpected role: %q", got)
 	}
 	if got := events[0].Message.Text; got != "hello" {

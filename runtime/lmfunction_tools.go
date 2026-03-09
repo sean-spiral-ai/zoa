@@ -8,17 +8,18 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
+	tools "zoa/tools"
 )
 
-func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]baselineagent.Tool, error) {
+func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]tools.Tool, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("registry is nil")
 	}
 	if manager == nil {
 		return nil, fmt.Errorf("task manager is nil")
 	}
-	return []baselineagent.Tool{
+	return []tools.Tool{
 		&searchLMFunctionsTool{registry: registry},
 		&searchLMMixinsTool{registry: registry},
 		&loadLMMixinTool{registry: registry},
@@ -32,8 +33,8 @@ type searchLMFunctionsTool struct {
 	registry *Registry
 }
 
-func (t *searchLMFunctionsTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *searchLMFunctionsTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "search_lmfunctions",
 		Description: "Search registered LM Functions by keywords against id and when_to_use guidance (any keyword may match).",
 		Schema: map[string]any{
@@ -61,7 +62,7 @@ func (t *searchLMFunctionsTool) Execute(_ context.Context, args map[string]any) 
 	if len(keywords) == 0 {
 		return "", fmt.Errorf("keywords must contain at least one non-empty string")
 	}
-	limit, err := baselineagent.IntArg(args, "limit", false)
+	limit, err := tools.IntArg(args, "limit", false)
 	if err != nil {
 		return "", err
 	}
@@ -116,8 +117,8 @@ type searchLMMixinsTool struct {
 	registry *Registry
 }
 
-func (t *searchLMMixinsTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *searchLMMixinsTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "search_lmmixin",
 		Description: "Search registered LM Mixins by keywords against id and when_to_use guidance (any keyword may match).",
 		Schema: map[string]any{
@@ -145,7 +146,7 @@ func (t *searchLMMixinsTool) Execute(_ context.Context, args map[string]any) (st
 	if len(keywords) == 0 {
 		return "", fmt.Errorf("keywords must contain at least one non-empty string")
 	}
-	limit, err := baselineagent.IntArg(args, "limit", false)
+	limit, err := tools.IntArg(args, "limit", false)
 	if err != nil {
 		return "", err
 	}
@@ -192,8 +193,8 @@ type loadLMMixinTool struct {
 	registry *Registry
 }
 
-func (t *loadLMMixinTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *loadLMMixinTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "load_lmmixin",
 		Description: "Load a registered LM Mixin by id and return its raw content string.",
 		Schema: map[string]any{
@@ -207,7 +208,7 @@ func (t *loadLMMixinTool) Spec() baselineagent.ToolSpec {
 }
 
 func (t *loadLMMixinTool) Execute(_ context.Context, args map[string]any) (string, error) {
-	mixinID, err := baselineagent.StringArg(args, "mixin_id", true)
+	mixinID, err := tools.StringArg(args, "mixin_id", true)
 	if err != nil {
 		return "", err
 	}
@@ -219,8 +220,8 @@ func (t *loadLMMixinTool) Execute(_ context.Context, args map[string]any) (strin
 	return mixin.Content, nil
 }
 
-func (t *callLMFunctionTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *callLMFunctionTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "call_lmfunction",
 		Description: "Start an LM Function task asynchronously and return a task_id handle. For long-running tasks, use wait_lmfunction with a timeout and call kill_lmfunction if you need to cancel.",
 		Schema: map[string]any{
@@ -235,7 +236,7 @@ func (t *callLMFunctionTool) Spec() baselineagent.ToolSpec {
 }
 
 func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
-	functionID, err := baselineagent.StringArg(args, "function_id", true)
+	functionID, err := tools.StringArg(args, "function_id", true)
 	if err != nil {
 		return "", err
 	}
@@ -268,8 +269,8 @@ type waitLMFunctionTool struct {
 	manager *TaskManager
 }
 
-func (t *waitLMFunctionTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *waitLMFunctionTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "wait_lmfunction",
 		Description: "Wait for an LM Function task by task_id. If timeout is reached, the task keeps running; call wait_lmfunction again for long-running work or use kill_lmfunction to cancel.",
 		Schema: map[string]any{
@@ -284,11 +285,11 @@ func (t *waitLMFunctionTool) Spec() baselineagent.ToolSpec {
 }
 
 func (t *waitLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
-	taskID, err := baselineagent.StringArg(args, "task_id", true)
+	taskID, err := tools.StringArg(args, "task_id", true)
 	if err != nil {
 		return "", err
 	}
-	timeoutSec, err := baselineagent.IntArg(args, "timeout_sec", false)
+	timeoutSec, err := tools.IntArg(args, "timeout_sec", false)
 	if err != nil {
 		return "", err
 	}
@@ -314,8 +315,8 @@ type killLMFunctionTool struct {
 	manager *TaskManager
 }
 
-func (t *killLMFunctionTool) Spec() baselineagent.ToolSpec {
-	return baselineagent.ToolSpec{
+func (t *killLMFunctionTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
 		Name:        "kill_lmfunction",
 		Description: "Cancel a running LM Function task by task_id.",
 		Schema: map[string]any{
@@ -329,7 +330,7 @@ func (t *killLMFunctionTool) Spec() baselineagent.ToolSpec {
 }
 
 func (t *killLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
-	taskID, err := baselineagent.StringArg(args, "task_id", true)
+	taskID, err := tools.StringArg(args, "task_id", true)
 	if err != nil {
 		return "", err
 	}

@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/internal/llmtrace"
 	"zoa/internal/semtrace"
+	"zoa/llm"
+	tools "zoa/tools"
 )
 
 type TaskStatus string
@@ -39,10 +40,10 @@ type TaskSnapshot struct {
 
 type TaskLogRecord struct {
 	TaskSnapshot
-	Input         map[string]any                      `json:"input,omitempty"`
-	Conversation  []baselineagent.ConversationMessage `json:"conversation,omitempty"`
-	HideByDefault bool                                `json:"hide_by_default,omitempty"`
-	UpdatedAt     time.Time                           `json:"updated_at"`
+	Input         map[string]any `json:"input,omitempty"`
+	Conversation  []llm.Message  `json:"conversation,omitempty"`
+	HideByDefault bool           `json:"hide_by_default,omitempty"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type TaskManagerOptions struct {
@@ -69,7 +70,7 @@ type taskRecord struct {
 	TaskSnapshot
 	spawnOptions SpawnOptions
 	input        map[string]any
-	conversation []baselineagent.ConversationMessage
+	conversation []llm.Message
 	parentTaskID string
 	cancelFunc   context.CancelFunc
 	// cancelRequested handles the race where Cancel(taskID) happens after Spawn
@@ -589,7 +590,7 @@ func (m *TaskManager) registerPump(pumpID, functionID string, input map[string]a
 	return nil
 }
 
-func (m *TaskManager) newLMFunctionTools() ([]baselineagent.Tool, error) {
+func (m *TaskManager) newLMFunctionTools() ([]tools.Tool, error) {
 	if m == nil {
 		return nil, fmt.Errorf("task manager is nil")
 	}
@@ -818,19 +819,19 @@ func namespaceFromFunctionID(id string) string {
 	return id
 }
 
-func cloneConversationMessages(in []baselineagent.ConversationMessage) []baselineagent.ConversationMessage {
+func cloneConversationMessages(in []llm.Message) []llm.Message {
 	if in == nil {
-		return []baselineagent.ConversationMessage{}
+		return []llm.Message{}
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
-		out := make([]baselineagent.ConversationMessage, len(in))
+		out := make([]llm.Message, len(in))
 		copy(out, in)
 		return out
 	}
-	var out []baselineagent.ConversationMessage
+	var out []llm.Message
 	if err := json.Unmarshal(b, &out); err != nil {
-		out = make([]baselineagent.ConversationMessage, len(in))
+		out = make([]llm.Message, len(in))
 		copy(out, in)
 		return out
 	}

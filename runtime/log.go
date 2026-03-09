@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 )
 
 type TaskLogSummary struct {
@@ -350,7 +350,7 @@ func taskLogRecordFromRow(row map[string]any) (TaskLogRecord, error) {
 	if err := decodeJSONValue(row["input_json"], &input); err != nil {
 		return TaskLogRecord{}, fmt.Errorf("decode task %s input_json: %w", taskID, err)
 	}
-	var conversation []baselineagent.ConversationMessage
+	var conversation []llm.Message
 	if err := decodeJSONValue(row["conversation_json"], &conversation); err != nil {
 		return TaskLogRecord{}, fmt.Errorf("decode task %s conversation_json: %w", taskID, err)
 	}

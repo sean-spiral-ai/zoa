@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 )
 
 type DebugConversationEvent struct {
 	ID        int64
 	CreatedAt string
-	Message   baselineagent.ConversationMessage
+	Message   llm.Message
 }
 
 func DebugGetConversation(ctx context.Context, db *sql.DB, session string) ([]DebugConversationEvent, error) {

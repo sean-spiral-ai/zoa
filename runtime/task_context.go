@@ -13,6 +13,9 @@ import (
 
 	baselineagent "zoa/baselineagent"
 	"zoa/internal/llmtrace"
+	"zoa/llm"
+	modelpkg "zoa/model"
+	tools "zoa/tools"
 )
 
 type TaskContextOptions struct {
@@ -30,7 +33,7 @@ type TaskContextOptions struct {
 	sqlDB         sqlExecutor
 	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools      func() ([]baselineagent.Tool, error)
+	lmfTools      func() ([]tools.Tool, error)
 	loadMixin     func(id string) (*Mixin, bool)
 	llmtraceStore *llmtrace.Store
 }
@@ -49,7 +52,7 @@ type TaskContext struct {
 	tmpDirs       []string
 	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools      func() ([]baselineagent.Tool, error)
+	lmfTools      func() ([]tools.Tool, error)
 	loadMixin     func(id string) (*Mixin, bool)
 	llmtraceStore *llmtrace.Store
 }
@@ -81,16 +84,16 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		return nil, fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 
-	toolset, err := baselineagent.NewBuiltinCodingTools(absCWD)
+	toolset, err := tools.NewCodingTools(absCWD)
 	if err != nil {
 		return nil, fmt.Errorf("initialize baseline tools: %w", err)
 	}
 	model := strings.TrimSpace(opts.Model)
 	if model == "" {
-		model = baselineagent.DefaultModel
+		model = modelpkg.DefaultModel
 	}
-	if !baselineagent.IsSupportedModel(model) {
-		return nil, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(baselineagent.SupportedModelNames(), ", "))
+	if !modelpkg.IsSupportedModel(model) {
+		return nil, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(modelpkg.SupportedModelNames(), ", "))
 	}
 
 	baseConfig := baselineagent.ConversationConfig{
@@ -101,7 +104,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		Temperature: opts.Temperature,
 		Tools:       toolset,
 	}
-	apiKey, _ := baselineagent.ResolveCredential(opts.APIKey, model)
+	apiKey, _ := modelpkg.ResolveCredential(opts.APIKey, model)
 	sqlDB := opts.sqlDB
 	ownsSQL := false
 	if sqlDB == nil && strings.TrimSpace(opts.SQLitePath) != "" {
@@ -318,7 +321,7 @@ func (t *TaskContext) Spawn(functionID string, input map[string]any, opts SpawnO
 	return t.spawnTask(functionID, cloneMapAny(input), opts)
 }
 
-func (t *TaskContext) NewLmFunctionTools() ([]baselineagent.Tool, error) {
+func (t *TaskContext) NewLmFunctionTools() ([]tools.Tool, error) {
 	if t == nil {
 		return nil, fmt.Errorf("task context is nil")
 	}
@@ -346,9 +349,9 @@ func (t *TaskContext) LoadMixin(id string) error {
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
-	if err := t.mainConv.AppendMessages([]baselineagent.ConversationMessage{
+	if err := t.mainConv.AppendMessages([]llm.Message{
 		{
-			Role: baselineagent.RoleUser,
+			Role: llm.RoleUser,
 			Text: strings.TrimSpace(mixin.Content),
 		},
 	}); err != nil {
@@ -401,11 +404,11 @@ func (t *TaskContext) NLExecTyped(prompt string, data map[string]any, out any) e
 	if err != nil {
 		return err
 	}
-	schema, err := baselineagent.JSONSchemaForOutputValue(out)
+	schema, err := llm.JSONSchemaForOutputValue(out)
 	if err != nil {
 		return err
 	}
-	res, err := t.mainConv.PromptStructured(t.ctx, instruction, baselineagent.JSONSchemaFormat{
+	res, err := t.mainConv.PromptStructured(t.ctx, instruction, llm.JSONSchemaFormat{
 		SchemaObject: schema,
 	})
 	if err != nil {
@@ -436,7 +439,7 @@ func (t *TaskContext) NLCondition(conditionID string, conditionPrompt string, da
 	if err != nil {
 		return err
 	}
-	res, err := fork.PromptStructured(t.ctx, instruction, baselineagent.JSONSchemaFormat{
+	res, err := fork.PromptStructured(t.ctx, instruction, llm.JSONSchemaFormat{
 		SchemaObject: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -480,7 +483,7 @@ func (t *TaskContext) ensureMainConversation() error {
 		if err != nil {
 			return fmt.Errorf("initialize lmfunction tools: %w", err)
 		}
-		toolset := make([]baselineagent.Tool, 0, len(cfg.Tools)+len(lmfTools))
+		toolset := make([]tools.Tool, 0, len(cfg.Tools)+len(lmfTools))
 		toolset = append(toolset, cfg.Tools...)
 		toolset = append(toolset, lmfTools...)
 		cfg.Tools = toolset
@@ -497,9 +500,9 @@ func (t *TaskContext) ensureMainConversation() error {
 }
 
 func (t *TaskContext) resolveAPIKey() (string, error) {
-	key, ok := baselineagent.ResolveCredential(t.apiKey, t.baseConfig.Model)
+	key, ok := modelpkg.ResolveCredential(t.apiKey, t.baseConfig.Model)
 	if !ok {
-		envVar := baselineagent.RequiredCredentialEnvVarForModel(t.baseConfig.Model)
+		envVar := modelpkg.RequiredCredentialEnvVarForModel(t.baseConfig.Model)
 		return "", fmt.Errorf(
 			"%s is required for baselineagent backed operations",
 			envVar,
@@ -509,13 +512,13 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 	return key, nil
 }
 
-func (t *TaskContext) conversationHistory() []baselineagent.ConversationMessage {
+func (t *TaskContext) conversationHistory() []llm.Message {
 	if t.mainConv == nil {
-		return []baselineagent.ConversationMessage{}
+		return []llm.Message{}
 	}
 	history := t.mainConv.History()
 	if history == nil {
-		return []baselineagent.ConversationMessage{}
+		return []llm.Message{}
 	}
 	return history
 }

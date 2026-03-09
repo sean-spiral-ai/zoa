@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
 	"zoa/internal/llmtrace"
+	modelpkg "zoa/model"
 )
 
 func runTUI(args []string) int {
@@ -36,9 +36,9 @@ func runTUI(args []string) int {
 
 	tuiFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
 	tuiFlags.StringVar(&sessionDir, "session-dir", gatewayclient.DefaultSessionDir, "Directory for gateway sqlite persistence")
-	tuiFlags.StringVar(&model, "model", baselineagent.DefaultModel, "Model identifier")
-	tuiFlags.IntVar(&maxTurns, "max-turns", baselineagent.DefaultMaxTurns, "Max model turns per prompt")
-	tuiFlags.Float64Var(&temperature, "temperature", baselineagent.DefaultTemperature, "Model temperature")
+	tuiFlags.StringVar(&model, "model", modelpkg.DefaultModel, "Model identifier")
+	tuiFlags.IntVar(&maxTurns, "max-turns", modelpkg.DefaultMaxTurns, "Max model turns per prompt")
+	tuiFlags.Float64Var(&temperature, "temperature", modelpkg.DefaultTemperature, "Model temperature")
 	tuiFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	tuiFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	tuiFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
@@ -55,22 +55,22 @@ func runTUI(args []string) int {
 	}
 
 	if strings.TrimSpace(model) == "" {
-		model = baselineagent.DefaultModel
+		model = modelpkg.DefaultModel
 	}
 	model = strings.TrimSpace(model)
-	if !baselineagent.IsSupportedModel(model) {
+	if !modelpkg.IsSupportedModel(model) {
 		fmt.Fprintf(
 			os.Stderr,
 			"error: unsupported model %q (supported: %s)\n",
 			model,
-			strings.Join(baselineagent.SupportedModelNames(), ", "),
+			strings.Join(modelpkg.SupportedModelNames(), ", "),
 		)
 		return 1
 	}
 
-	_, ok := baselineagent.ResolveCredential("", model)
+	_, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		envVar := baselineagent.RequiredCredentialEnvVarForModel(model)
+		envVar := modelpkg.RequiredCredentialEnvVarForModel(model)
 		fmt.Fprintf(
 			os.Stderr,
 			"warning: %s is not set; non-slash chat messages will fail until configured\n",

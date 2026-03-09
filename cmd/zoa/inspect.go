@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	baselineagent "zoa/baselineagent"
+	"zoa/llm"
 	gatewaylmf "zoa/lmflib/gateway"
 
 	_ "modernc.org/sqlite"
@@ -217,7 +217,7 @@ func runInspectConversation(db *sql.DB, session string) int {
 	return 0
 }
 
-func renderInspectConversationMessage(msg baselineagent.ConversationMessage) string {
+func renderInspectConversationMessage(msg llm.Message) string {
 	sections := []string{}
 	primaryText := strings.TrimSpace(msg.Text)
 	if primaryText != "" {
@@ -275,7 +275,7 @@ func renderInspectConversationMessage(msg baselineagent.ConversationMessage) str
 	return strings.Join(sections, "\n\n")
 }
 
-func formatInspectToolCall(call baselineagent.ConversationToolCall) string {
+func formatInspectToolCall(call llm.ToolCall) string {
 	argsJSON := "{}"
 	if len(call.Args) > 0 {
 		if b, err := json.Marshal(call.Args); err == nil {

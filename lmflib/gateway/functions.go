@@ -14,9 +14,12 @@ import (
 	baselineagent "zoa/baselineagent"
 	"zoa/internal/llmtrace"
 	"zoa/internal/tracecontrol"
+	"zoa/llm"
 	"zoa/lmflib"
-	"zoa/runtime"
+	modelpkg "zoa/model"
 	"zoa/reliable"
+	"zoa/runtime"
+	tools "zoa/tools"
 )
 
 const (
@@ -234,7 +237,7 @@ func pumpFunction() *runtime.Function {
 type inboundPumpJob struct {
 	row   *inboundRow
 	reply string
-	delta []baselineagent.ConversationMessage
+	delta []llm.Message
 }
 
 func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
@@ -478,7 +481,7 @@ func outboxMaxIDFunction() *runtime.Function {
 	}
 }
 
-func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRow) (string, []baselineagent.ConversationMessage, error) {
+func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRow) (string, []llm.Message, error) {
 	if row == nil {
 		return "", nil, fmt.Errorf("inbound row is nil")
 	}
@@ -493,22 +496,22 @@ func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRo
 	return processChatMessage(state, tc, input, row.Session, row.Text)
 }
 
-func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]any, session string, message string) (string, []baselineagent.ConversationMessage, error) {
+func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]any, session string, message string) (string, []llm.Message, error) {
 	model, err := lmflib.StringInput(input, "model", false)
 	if err != nil {
 		return "", nil, err
 	}
 	if strings.TrimSpace(model) == "" {
-		model = baselineagent.DefaultModel
+		model = modelpkg.DefaultModel
 	}
 	model = strings.TrimSpace(model)
-	if !baselineagent.IsSupportedModel(model) {
+	if !modelpkg.IsSupportedModel(model) {
 		return "", nil, fmt.Errorf("unsupported model %q", model)
 	}
 
-	apiKey, ok := baselineagent.ResolveCredential("", model)
+	apiKey, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		return "", nil, fmt.Errorf("%s is required", baselineagent.RequiredCredentialEnvVarForModel(model))
+		return "", nil, fmt.Errorf("%s is required", modelpkg.RequiredCredentialEnvVarForModel(model))
 	}
 
 	cwd, err := lmflib.StringInput(input, "cwd", false)
@@ -531,14 +534,14 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 		return "", nil, err
 	}
 	if maxTurns <= 0 {
-		maxTurns = baselineagent.DefaultMaxTurns
+		maxTurns = modelpkg.DefaultMaxTurns
 	}
 	temperature, err := lmflib.FloatInput(input, "temperature", false)
 	if err != nil {
 		return "", nil, err
 	}
 	if temperature == 0 {
-		temperature = baselineagent.DefaultTemperature
+		temperature = modelpkg.DefaultTemperature
 	}
 
 	timeoutSec := defaultChatTimeoutSec
@@ -556,7 +559,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	if err != nil {
 		return "", nil, err
 	}
-	tools, err := baselineagent.NewBuiltinCodingTools(absCWD)
+	codingTools, err := tools.NewCodingTools(absCWD)
 	if err != nil {
 		return "", nil, fmt.Errorf("initialize builtin tools: %w", err)
 	}
@@ -564,7 +567,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	if err != nil {
 		return "", nil, fmt.Errorf("initialize lmfunction tools: %w", err)
 	}
-	tools = append(tools, lmfTools...)
+	codingTools = append(codingTools, lmfTools...)
 	conversationTimeout := time.Duration(timeoutSec) * time.Second
 	if timeoutSec == 0 {
 		conversationTimeout = 0
@@ -576,7 +579,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 		Timeout:         conversationTimeout,
 		Temperature:     temperature,
 		SystemPrompt:    defaultChatSystemPrompt,
-		Tools:           tools,
+		Tools:           codingTools,
 		InitialMessages: history,
 		Tracer:          newTracerFromStore(tc.LLMTraceStore()),
 	})
@@ -590,7 +593,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	}
 	historyLen := len(history)
 	res, err := conv.Prompt(promptCtx, message)
-	var delta []baselineagent.ConversationMessage
+	var delta []llm.Message
 	if full := conv.History(); len(full) > historyLen {
 		delta = full[historyLen:]
 	}
