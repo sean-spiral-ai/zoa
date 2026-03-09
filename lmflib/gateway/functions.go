@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
+	convdb "zoa/conversation/db"
+	convrunner "zoa/conversation/runner"
 	"zoa/internal/llmtrace"
 	"zoa/internal/tracecontrol"
 	"zoa/llm"
@@ -237,7 +238,6 @@ func pumpFunction() *runtime.Function {
 type inboundPumpJob struct {
 	row   *inboundRow
 	reply string
-	delta []llm.Message
 }
 
 func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
@@ -296,7 +296,7 @@ func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session strin
 				}
 			}()
 
-			reply, delta, err := processInboundMessage(state, tc, job.Value.row)
+			reply, err := processInboundMessage(state, tc, job.Value.row)
 			close(heartbeatStop)
 			select {
 			case <-leaseLost:
@@ -304,11 +304,9 @@ func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session strin
 			default:
 			}
 			if err != nil {
-				job.Value.delta = delta
 				return err
 			}
 			job.Value.reply = reply
-			job.Value.delta = delta
 			return nil
 		},
 		Complete: func(_ context.Context, job *reliable.ClaimedJob[inboundPumpJob], now time.Time) error {
@@ -318,9 +316,6 @@ func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session strin
 			}
 			if !claimed {
 				return nil
-			}
-			if len(job.Value.delta) > 0 {
-				_ = state.appendConversationMessages(session, job.Value.delta, now)
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -348,9 +343,6 @@ func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session strin
 			}
 			if !claimed {
 				return nil
-			}
-			if len(job.Value.delta) > 0 {
-				_ = state.appendConversationMessages(session, job.Value.delta, now)
 			}
 			if lastOutboxID != nil && outboxID > 0 {
 				*lastOutboxID = outboxID
@@ -481,13 +473,13 @@ func outboxMaxIDFunction() *runtime.Function {
 	}
 }
 
-func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRow) (string, []llm.Message, error) {
+func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRow) (string, error) {
 	if row == nil {
-		return "", nil, fmt.Errorf("inbound row is nil")
+		return "", fmt.Errorf("inbound row is nil")
 	}
 	if strings.HasPrefix(strings.TrimSpace(row.Text), "/") {
 		reply, err := renderSlashResponse(state, tc, row.Session, row.Text)
-		return reply, nil, err
+		return reply, err
 	}
 	input := cloneMapAnyLocal(row.PumpInput)
 	if input == nil {
@@ -496,49 +488,49 @@ func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRo
 	return processChatMessage(state, tc, input, row.Session, row.Text)
 }
 
-func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]any, session string, message string) (string, []llm.Message, error) {
+func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]any, session string, message string) (string, error) {
 	model, err := lmflib.StringInput(input, "model", false)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if strings.TrimSpace(model) == "" {
 		model = modelpkg.DefaultModel
 	}
 	model = strings.TrimSpace(model)
 	if !modelpkg.IsSupportedModel(model) {
-		return "", nil, fmt.Errorf("unsupported model %q", model)
+		return "", fmt.Errorf("unsupported model %q", model)
 	}
 
 	apiKey, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		return "", nil, fmt.Errorf("%s is required", modelpkg.RequiredCredentialEnvVarForModel(model))
+		return "", fmt.Errorf("%s is required", modelpkg.RequiredCredentialEnvVarForModel(model))
 	}
 
 	cwd, err := lmflib.StringInput(input, "cwd", false)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if strings.TrimSpace(cwd) == "" {
 		cwd, err = os.Getwd()
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve cwd: %w", err)
+			return "", fmt.Errorf("resolve cwd: %w", err)
 		}
 	}
 	absCWD, err := filepath.Abs(cwd)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve absolute cwd: %w", err)
+		return "", fmt.Errorf("resolve absolute cwd: %w", err)
 	}
 
 	maxTurns, err := lmflib.IntInput(input, "max_turns", false)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if maxTurns <= 0 {
 		maxTurns = modelpkg.DefaultMaxTurns
 	}
 	temperature, err := lmflib.FloatInput(input, "temperature", false)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if temperature == 0 {
 		temperature = modelpkg.DefaultTemperature
@@ -548,64 +540,85 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	if _, hasTimeout := input["timeout_sec"]; hasTimeout {
 		timeoutSec, err = lmflib.IntInput(input, "timeout_sec", false)
 		if err != nil {
-			return "", nil, err
+			return "", err
 		}
 		if timeoutSec < 0 {
-			return "", nil, fmt.Errorf("timeout_sec must be >= 0")
+			return "", fmt.Errorf("timeout_sec must be >= 0")
 		}
 	}
 
-	history, err := state.loadConversationHistory(session)
-	if err != nil {
-		return "", nil, err
-	}
 	codingTools, err := tools.NewCodingTools(absCWD)
 	if err != nil {
-		return "", nil, fmt.Errorf("initialize builtin tools: %w", err)
+		return "", fmt.Errorf("initialize builtin tools: %w", err)
 	}
 	lmfTools, err := tc.NewLmFunctionTools()
 	if err != nil {
-		return "", nil, fmt.Errorf("initialize lmfunction tools: %w", err)
+		return "", fmt.Errorf("initialize lmfunction tools: %w", err)
 	}
 	codingTools = append(codingTools, lmfTools...)
-	conversationTimeout := time.Duration(timeoutSec) * time.Second
-	if timeoutSec == 0 {
-		conversationTimeout = 0
-	}
-	conv, err := baselineagent.NewConversation(apiKey, baselineagent.ConversationConfig{
-		CWD:             absCWD,
-		Model:           model,
-		MaxTurns:        maxTurns,
-		Timeout:         conversationTimeout,
-		Temperature:     temperature,
-		SystemPrompt:    defaultChatSystemPrompt,
-		Tools:           codingTools,
-		InitialMessages: history,
-		Tracer:          newTracerFromStore(tc.LLMTraceStore()),
-	})
-	if err != nil {
-		return "", nil, err
-	}
-
 	promptCtx := tc.Context()
 	if promptCtx == nil {
 		promptCtx = context.Background()
 	}
-	historyLen := len(history)
-	res, err := conv.Prompt(promptCtx, message)
-	var delta []llm.Message
-	if full := conv.History(); len(full) > historyLen {
-		delta = full[historyLen:]
-	}
-	if err != nil {
-		return "", delta, err
+	if timeoutSec > 0 {
+		var cancel context.CancelFunc
+		promptCtx, cancel = context.WithTimeout(promptCtx, time.Duration(timeoutSec)*time.Second)
+		defer cancel()
 	}
 
-	text := strings.TrimSpace(res.FinalResponse)
+	client, err := gatewayLLMClient(model, apiKey)
+	if err != nil {
+		return "", err
+	}
+	conversationDB, err := tc.ConversationDB()
+	if err != nil {
+		return "", err
+	}
+	refName := "sessions/" + normalizeSession(session)
+	if _, err := conversationDB.GetRef(refName); errors.Is(err, convdb.ErrRefNotFound) {
+		if err := conversationDB.CreateRef(refName, convdb.RootHash); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	r, err := convrunner.NewRunner(convrunner.RunnerConfig{
+		DB:           conversationDB,
+		Ref:          refName,
+		Client:       client,
+		Model:        model,
+		Tools:        codingTools,
+		Temperature:  temperature,
+		SystemPrompt: defaultChatSystemPrompt,
+		MaxTurns:     maxTurns,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := r.Run(promptCtx, message); err != nil {
+		return "", err
+	}
+	res := r.Wait()
+	if res.Err != nil {
+		return "", res.Err
+	}
+
+	text := strings.TrimSpace(res.FinalText)
 	if text == "" {
 		text = "(no response)"
 	}
-	return text, delta, nil
+	return text, nil
+}
+
+func gatewayLLMClient(model string, credential string) (llm.Client, error) {
+	switch modelpkg.InferProviderFromModel(model) {
+	case modelpkg.ProviderGemini:
+		return llm.NewGeminiClient(credential), nil
+	case modelpkg.ProviderAnthropic:
+		return llm.NewAnthropicClientWithOAuthToken(credential), nil
+	default:
+		return nil, fmt.Errorf("unsupported model %q", model)
+	}
 }
 
 func renderSlashResponse(state *state, tc *runtime.TaskContext, session string, text string) (string, error) {

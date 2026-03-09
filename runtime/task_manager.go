@@ -504,6 +504,7 @@ func (m *TaskManager) runFunction(ctx context.Context, parentTaskID string, fn *
 	tcOpts.loadMixin = m.registry.GetMixin
 	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
 	tcOpts.llmtraceStore = m.opts.LLMTraceStore
+	tcOpts.taskID = parentTaskID
 	if fn.AssetsDir != "" {
 		tcOpts.AssetsDir = fn.AssetsDir
 	}

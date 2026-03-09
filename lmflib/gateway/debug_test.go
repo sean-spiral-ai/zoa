@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	convdb "zoa/conversation/db"
 	"zoa/llm"
 
 	_ "modernc.org/sqlite"
@@ -18,14 +19,29 @@ func TestDebugGetConversation(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(`CREATE TABLE gateway__conversation_event (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session TEXT NOT NULL,
+	_, err = db.Exec(`CREATE TABLE conversation_node (
+		hash TEXT PRIMARY KEY,
+		parent_hash TEXT,
+		role TEXT NOT NULL,
 		message_json TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	)`)
 	if err != nil {
 		t.Fatalf("create table: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE conversation_ref (
+		name TEXT PRIMARY KEY,
+		hash TEXT NOT NULL,
+		leased_by TEXT NOT NULL DEFAULT '',
+		lease_until TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create refs table: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO conversation_node(hash, parent_hash, role, message_json, created_at) VALUES (?, '', 'root', '{}', '2026-03-04T00:00:00Z')`, convdb.RootHash)
+	if err != nil {
+		t.Fatalf("insert root: %v", err)
 	}
 
 	msg := llm.Message{
@@ -37,17 +53,14 @@ func TestDebugGetConversation(t *testing.T) {
 		t.Fatalf("marshal message: %v", err)
 	}
 
-	_, err = db.Exec(`INSERT INTO gateway__conversation_event(session, message_json, created_at) VALUES ('default', ?, '2026-03-04T00:00:00Z')`, string(data))
+	hash := convdb.NodeHash(convdb.RootHash, data)
+	_, err = db.Exec(`INSERT INTO conversation_node(hash, parent_hash, role, message_json, created_at) VALUES (?, ?, 'user', ?, '2026-03-04T00:00:00Z')`, hash, convdb.RootHash, string(data))
 	if err != nil {
-		t.Fatalf("insert default session row: %v", err)
+		t.Fatalf("insert node: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO gateway__conversation_event(session, message_json, created_at) VALUES ('other', ?, '2026-03-04T00:00:01Z')`, string(data))
+	_, err = db.Exec(`INSERT INTO conversation_ref(name, hash, updated_at) VALUES ('sessions/default', ?, '2026-03-04T00:00:00Z')`, hash)
 	if err != nil {
-		t.Fatalf("insert other session row: %v", err)
-	}
-	_, err = db.Exec(`INSERT INTO gateway__conversation_event(session, message_json, created_at) VALUES ('default', '   ', '2026-03-04T00:00:02Z')`)
-	if err != nil {
-		t.Fatalf("insert empty message row: %v", err)
+		t.Fatalf("insert ref: %v", err)
 	}
 
 	events, err := DebugGetConversation(context.Background(), db, "")

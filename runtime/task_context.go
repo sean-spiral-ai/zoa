@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,11 +13,16 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
+	convdb "zoa/conversation/db"
+	convrunner "zoa/conversation/runner"
 	"zoa/internal/llmtrace"
 	"zoa/llm"
 	modelpkg "zoa/model"
 	tools "zoa/tools"
 )
+
+const defaultConversationSystemPrompt = `You are a reliable assistant.
+Use tools when needed, do not invent results, and keep responses concise.`
 
 type TaskContextOptions struct {
 	APIKey      string
@@ -36,25 +42,29 @@ type TaskContextOptions struct {
 	lmfTools      func() ([]tools.Tool, error)
 	loadMixin     func(id string) (*Mixin, bool)
 	llmtraceStore *llmtrace.Store
+	taskID        string
 }
 
 type TaskContext struct {
-	ctx           context.Context
-	logger        *slog.Logger
-	apiKey        string
-	baseConfig    baselineagent.ConversationConfig
-	mainConv      baselineagent.Conversation
-	sqlDB         sqlExecutor
-	ownsSQL       bool
-	namespace     string
-	sqlitePath    string
-	assetsDir     string
-	tmpDirs       []string
-	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools      func() ([]tools.Tool, error)
-	loadMixin     func(id string) (*Mixin, bool)
-	llmtraceStore *llmtrace.Store
+	ctx                context.Context
+	logger             *slog.Logger
+	apiKey             string
+	baseConfig         baselineagent.ConversationConfig
+	mainConv           baselineagent.Conversation
+	conversationDB     *convdb.DB
+	ownsConversationDB bool
+	sqlDB              sqlExecutor
+	ownsSQL            bool
+	namespace          string
+	sqlitePath         string
+	assetsDir          string
+	tmpDirs            []string
+	registerPump       func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask          func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools           func() ([]tools.Tool, error)
+	loadMixin          func(id string) (*Mixin, bool)
+	llmtraceStore      *llmtrace.Store
+	taskID             string
 }
 
 type SqlExecResult struct {
@@ -141,6 +151,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		lmfTools:      opts.lmfTools,
 		loadMixin:     opts.loadMixin,
 		llmtraceStore: opts.llmtraceStore,
+		taskID:        strings.TrimSpace(opts.taskID),
 	}, nil
 }
 
@@ -154,9 +165,18 @@ func (t *TaskContext) Close() error {
 	}
 	t.tmpDirs = nil
 	if !t.ownsSQL || t.sqlDB == nil {
+		if t.ownsConversationDB && t.conversationDB != nil {
+			return t.conversationDB.Close()
+		}
 		return nil
 	}
-	return t.sqlDB.Close()
+	sqlErr := t.sqlDB.Close()
+	if t.ownsConversationDB && t.conversationDB != nil {
+		if err := t.conversationDB.Close(); err != nil && sqlErr == nil {
+			sqlErr = err
+		}
+	}
+	return sqlErr
 }
 
 // GetStateDir returns a persistent state directory for this namespace,
@@ -197,6 +217,22 @@ func (t *TaskContext) GetAssetsDir() (string, error) {
 // LLMTraceStore returns the llmtrace store, or nil if not configured.
 func (t *TaskContext) LLMTraceStore() *llmtrace.Store {
 	return t.llmtraceStore
+}
+
+func (t *TaskContext) ConversationDB() (*convdb.DB, error) {
+	if t.conversationDB != nil {
+		return t.conversationDB, nil
+	}
+	if strings.TrimSpace(t.sqlitePath) == "" {
+		return nil, fmt.Errorf("sqlite path is not configured for this task context")
+	}
+	db, err := convdb.Open(t.sqlitePath)
+	if err != nil {
+		return nil, err
+	}
+	t.conversationDB = db
+	t.ownsConversationDB = true
+	return db, nil
 }
 
 func (t *TaskContext) SqlExec(query string, args ...any) (SqlExecResult, error) {
@@ -349,11 +385,15 @@ func (t *TaskContext) LoadMixin(id string) error {
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
-	if err := t.mainConv.AppendMessages([]llm.Message{
-		{
+	if t.mainConv != nil {
+		return t.mainConv.AppendMessages([]llm.Message{{
 			Role: llm.RoleUser,
 			Text: strings.TrimSpace(mixin.Content),
-		},
+		}})
+	}
+	if err := t.appendToMainRef(llm.Message{
+		Role: llm.RoleUser,
+		Text: strings.TrimSpace(mixin.Content),
 	}); err != nil {
 		return err
 	}
@@ -387,11 +427,18 @@ func (t *TaskContext) NLExec(prompt string, data map[string]any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	res, err := t.mainConv.Prompt(t.ctx, instruction)
+	r, err := t.newMainRunner(convrunner.RunnerConfig{})
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(res.FinalResponse), nil
+	if err := r.Run(t.ctx, instruction); err != nil {
+		return "", err
+	}
+	res := r.Wait()
+	if res.Err != nil {
+		return "", res.Err
+	}
+	return strings.TrimSpace(res.FinalText), nil
 }
 
 // NLExecTyped appends to the TaskContext's persistent conversation and decodes a JSON response into out.
@@ -408,15 +455,23 @@ func (t *TaskContext) NLExecTyped(prompt string, data map[string]any, out any) e
 	if err != nil {
 		return err
 	}
-	res, err := t.mainConv.PromptStructured(t.ctx, instruction, llm.JSONSchemaFormat{
-		SchemaObject: schema,
+	r, err := t.newMainRunner(convrunner.RunnerConfig{
+		ResponseMimeType: llm.JSONSchemaFormat{SchemaObject: schema}.MimeType(),
+		ResponseSchema:   schema,
+		DisableTools:     true,
 	})
 	if err != nil {
 		return err
 	}
-
-	if err := json.Unmarshal([]byte(strings.TrimSpace(res.FinalResponse)), out); err != nil {
-		return fmt.Errorf("decode typed NLExec response: %w; raw response: %s", err, strings.TrimSpace(res.FinalResponse))
+	if err := r.Run(t.ctx, instruction); err != nil {
+		return err
+	}
+	res := r.Wait()
+	if res.Err != nil {
+		return res.Err
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.FinalText)), out); err != nil {
+		return fmt.Errorf("decode typed NLExec response: %w; raw response: %s", err, strings.TrimSpace(res.FinalText))
 	}
 	return nil
 }
@@ -434,28 +489,26 @@ func (t *TaskContext) NLCondition(conditionID string, conditionPrompt string, da
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
-	fork := t.mainConv.Fork()
 	instruction, err := nlConditionInstruction(conditionID, conditionPrompt, data)
 	if err != nil {
 		return err
 	}
-	res, err := fork.PromptStructured(t.ctx, instruction, llm.JSONSchemaFormat{
-		SchemaObject: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"passed":      map[string]any{"type": "boolean"},
-				"explanation": map[string]any{"type": "string"},
-			},
-			"required": []string{"passed", "explanation"},
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"passed":      map[string]any{"type": "boolean"},
+			"explanation": map[string]any{"type": "string"},
 		},
-	})
+		"required": []string{"passed", "explanation"},
+	}
+	res, err := t.runConditionBranch(instruction, schema)
 	if err != nil {
 		return err
 	}
 
-	parsed, err := parseConditionResultJSON(res.FinalResponse)
+	parsed, err := parseConditionResultJSON(res)
 	if err != nil {
-		return fmt.Errorf("parse NL condition response: %w; raw response: %s", err, strings.TrimSpace(res.FinalResponse))
+		return fmt.Errorf("parse NL condition response: %w; raw response: %s", err, strings.TrimSpace(res))
 	}
 	if parsed.Passed {
 		return nil
@@ -472,31 +525,20 @@ func (t *TaskContext) ensureMainConversation() error {
 	if t.mainConv != nil {
 		return nil
 	}
-	t.logger.Debug("initializing main conversation", "model", t.baseConfig.Model)
-	apiKey, err := t.resolveAPIKey()
+	db, err := t.ConversationDB()
 	if err != nil {
 		return err
 	}
-	cfg := t.baseConfig
-	if t.lmfTools != nil {
-		lmfTools, err := t.lmfTools()
-		if err != nil {
-			return fmt.Errorf("initialize lmfunction tools: %w", err)
-		}
-		toolset := make([]tools.Tool, 0, len(cfg.Tools)+len(lmfTools))
-		toolset = append(toolset, cfg.Tools...)
-		toolset = append(toolset, lmfTools...)
-		cfg.Tools = toolset
-	}
-	if t.llmtraceStore != nil {
-		cfg.Tracer = llmtrace.NewTracer(t.llmtraceStore)
-	}
-	conv, err := baselineagent.NewConversation(apiKey, cfg)
-	if err != nil {
+	ref := t.mainConversationRef()
+	if _, err := db.GetRef(ref); err == nil {
+		return t.ensureSystemPromptOnRef()
+	} else if !errors.Is(err, convdb.ErrRefNotFound) {
 		return err
 	}
-	t.mainConv = conv
-	return nil
+	if err := db.CreateRef(ref, convdb.RootHash); err != nil && !strings.Contains(err.Error(), "UNIQUE") {
+		return err
+	}
+	return t.ensureSystemPromptOnRef()
 }
 
 func (t *TaskContext) resolveAPIKey() (string, error) {
@@ -513,14 +555,198 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 }
 
 func (t *TaskContext) conversationHistory() []llm.Message {
-	if t.mainConv == nil {
+	if t.mainConv != nil {
+		return t.mainConv.History()
+	}
+	db, err := t.ConversationDB()
+	if err != nil {
 		return []llm.Message{}
 	}
-	history := t.mainConv.History()
-	if history == nil {
+	ref, err := db.GetRef(t.mainConversationRef())
+	if err != nil {
 		return []llm.Message{}
+	}
+	chain, err := db.LoadChain(ref.Hash)
+	if err != nil {
+		return []llm.Message{}
+	}
+	history := make([]llm.Message, 0, len(chain))
+	for _, node := range chain {
+		history = append(history, node.Message)
 	}
 	return history
+}
+
+func (t *TaskContext) mainConversationRef() string {
+	if strings.TrimSpace(t.taskID) != "" {
+		return "tasks/" + strings.TrimSpace(t.taskID) + "/main"
+	}
+	if strings.TrimSpace(t.namespace) != "" {
+		return "tasks/" + strings.TrimSpace(t.namespace) + "/main"
+	}
+	return "tasks/default/main"
+}
+
+func (t *TaskContext) ensureSystemPromptOnRef() error {
+	db, err := t.ConversationDB()
+	if err != nil {
+		return err
+	}
+	ref, err := db.GetRef(t.mainConversationRef())
+	if err != nil {
+		return err
+	}
+	chain, err := db.LoadChain(ref.Hash)
+	if err != nil {
+		return err
+	}
+	if len(chain) > 0 {
+		return nil
+	}
+	systemPrompt := strings.TrimSpace(t.baseConfig.SystemPrompt)
+	if systemPrompt == "" {
+		systemPrompt = defaultConversationSystemPrompt
+	}
+	holder := fmt.Sprintf("taskctx-system-%d", time.Now().UTC().UnixNano())
+	if err := db.AcquireLease(t.mainConversationRef(), holder, 30*time.Second); err != nil {
+		return err
+	}
+	defer func() { _ = db.ReleaseLease(t.mainConversationRef(), holder) }()
+	ref, err = db.GetRef(t.mainConversationRef())
+	if err != nil {
+		return err
+	}
+	chain, err = db.LoadChain(ref.Hash)
+	if err != nil {
+		return err
+	}
+	if len(chain) > 0 {
+		return nil
+	}
+	_, err = db.AdvanceRef(t.mainConversationRef(), ref.Hash, convdb.Message{
+		Role: llm.RoleSystem,
+		Text: systemPrompt,
+	}, holder)
+	return err
+}
+
+func (t *TaskContext) appendToMainRef(msg llm.Message) error {
+	db, err := t.ConversationDB()
+	if err != nil {
+		return err
+	}
+	holder := fmt.Sprintf("taskctx-append-%d", time.Now().UTC().UnixNano())
+	if err := db.AcquireLease(t.mainConversationRef(), holder, 30*time.Second); err != nil {
+		return err
+	}
+	defer func() { _ = db.ReleaseLease(t.mainConversationRef(), holder) }()
+	ref, err := db.GetRef(t.mainConversationRef())
+	if err != nil {
+		return err
+	}
+	_, err = db.AdvanceRef(t.mainConversationRef(), ref.Hash, convdb.Message(msg), holder)
+	return err
+}
+
+func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.ConversationRunner, error) {
+	apiKey, err := t.resolveAPIKey()
+	if err != nil {
+		return nil, err
+	}
+	cfg := extra
+	db, err := t.ConversationDB()
+	if err != nil {
+		return nil, err
+	}
+	cfg.DB = db
+	cfg.Ref = t.mainConversationRef()
+	cfg.Client, err = t.newLLMClient(apiKey)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Model = t.baseConfig.Model
+	cfg.Temperature = t.baseConfig.Temperature
+	cfg.SystemPrompt = t.baseConfig.SystemPrompt
+	cfg.MaxTurns = t.baseConfig.MaxTurns
+	if cfg.MaxTurns <= 0 {
+		cfg.MaxTurns = modelpkg.DefaultMaxTurns
+	}
+	toolset := append([]tools.Tool(nil), t.baseConfig.Tools...)
+	if !cfg.DisableTools && t.lmfTools != nil {
+		lmfTools, err := t.lmfTools()
+		if err != nil {
+			return nil, fmt.Errorf("initialize lmfunction tools: %w", err)
+		}
+		toolset = append(toolset, lmfTools...)
+	}
+	cfg.Tools = toolset
+	return convrunner.NewRunner(cfg)
+}
+
+func (t *TaskContext) newLLMClient(credential string) (llm.Client, error) {
+	switch modelpkg.InferProviderFromModel(t.baseConfig.Model) {
+	case modelpkg.ProviderGemini:
+		return llm.NewGeminiClient(credential), nil
+	case modelpkg.ProviderAnthropic:
+		return llm.NewAnthropicClientWithOAuthToken(credential), nil
+	default:
+		return nil, fmt.Errorf("unsupported model %q", t.baseConfig.Model)
+	}
+}
+
+func (t *TaskContext) runConditionBranch(instruction string, schema map[string]any) (string, error) {
+	apiKey, err := t.resolveAPIKey()
+	if err != nil {
+		return "", err
+	}
+	client, err := t.newLLMClient(apiKey)
+	if err != nil {
+		return "", err
+	}
+	db, err := t.ConversationDB()
+	if err != nil {
+		return "", err
+	}
+	ref, err := db.GetRef(t.mainConversationRef())
+	if err != nil {
+		return "", err
+	}
+	promptHash, err := db.Append(ref.Hash, convdb.Message{Role: llm.RoleUser, Text: instruction})
+	if err != nil {
+		return "", err
+	}
+	chain, err := db.LoadChain(promptHash)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Complete(t.ctx, llm.CompletionRequest{
+		Model:            t.baseConfig.Model,
+		Messages:         taskChainMessages(chain),
+		Temperature:      t.baseConfig.Temperature,
+		ResponseMimeType: llm.JSONSchemaFormat{SchemaObject: schema}.MimeType(),
+		ResponseSchema:   schema,
+	})
+	if err != nil {
+		return "", err
+	}
+	_, err = db.Append(promptHash, convdb.Message{
+		Role:      llm.RoleAssistant,
+		Text:      resp.Text,
+		Parts:     resp.Parts,
+		ToolCalls: resp.ToolCalls,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
+}
+
+func taskChainMessages(chain []convdb.Node) []llm.Message {
+	out := make([]llm.Message, 0, len(chain))
+	for _, node := range chain {
+		out = append(out, node.Message)
+	}
+	return out
 }
 
 type NLConditionError struct {
