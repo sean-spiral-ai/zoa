@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	topmodel "zoa/model"
 )
 
 const (
-	DefaultGeminiModel    = ModelGemini3FlashPreview
-	DefaultAnthropicModel = ModelClaudeOpus46
-	DefaultModel          = DefaultAnthropicModel
-	DefaultTemperature    = 0.2
-	DefaultMaxTurns       = 100000
+	DefaultGeminiModel    = topmodel.DefaultGeminiModel
+	DefaultAnthropicModel = topmodel.DefaultAnthropicModel
+	DefaultModel          = topmodel.DefaultModel
+	DefaultTemperature    = topmodel.DefaultTemperature
+	DefaultMaxTurns       = topmodel.DefaultMaxTurns
 )
 
 type RunConfig struct {

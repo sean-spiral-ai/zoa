@@ -1,56 +1,29 @@
 package baselineagent
 
-import (
-	"slices"
-	"strings"
-)
+import topmodel "zoa/model"
 
-type Provider string
+type Provider = topmodel.Provider
 
 const (
-	ProviderGemini    Provider = "gemini"
-	ProviderAnthropic Provider = "anthropic"
+	ProviderGemini    = topmodel.ProviderGemini
+	ProviderAnthropic = topmodel.ProviderAnthropic
 )
 
 const (
-	ModelClaudeSonnet46      = "claude-sonnet-4-6"
-	ModelClaudeOpus46        = "claude-opus-4-6"
-	ModelGemini31ProPreview  = "gemini-3.1-pro-preview"
-	ModelGemini3FlashPreview = "gemini-3-flash-preview"
+	ModelClaudeSonnet46      = topmodel.ModelClaudeSonnet46
+	ModelClaudeOpus46        = topmodel.ModelClaudeOpus46
+	ModelGemini31ProPreview  = topmodel.ModelGemini31ProPreview
+	ModelGemini3FlashPreview = topmodel.ModelGemini3FlashPreview
 )
-
-var supportedModelNames = []string{
-	ModelClaudeSonnet46,
-	ModelClaudeOpus46,
-	ModelGemini31ProPreview,
-	ModelGemini3FlashPreview,
-}
-
-func (p Provider) Valid() bool {
-	return p == ProviderGemini || p == ProviderAnthropic
-}
 
 func SupportedModelNames() []string {
-	return slices.Clone(supportedModelNames)
+	return topmodel.SupportedModelNames()
 }
 
 func IsSupportedModel(model string) bool {
-	normalized := strings.TrimSpace(model)
-	for _, supported := range supportedModelNames {
-		if normalized == supported {
-			return true
-		}
-	}
-	return false
+	return topmodel.IsSupportedModel(model)
 }
 
 func InferProviderFromModel(model string) Provider {
-	switch strings.TrimSpace(model) {
-	case ModelClaudeSonnet46, ModelClaudeOpus46:
-		return ProviderAnthropic
-	case ModelGemini31ProPreview, ModelGemini3FlashPreview:
-		return ProviderGemini
-	default:
-		return Provider("")
-	}
+	return topmodel.InferProviderFromModel(model)
 }
