@@ -45,6 +45,7 @@ type anthropicMessagesRequest struct {
 
 type anthropicCacheControl struct {
 	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 type anthropicOutputConfig struct {
@@ -262,7 +263,7 @@ func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequ
 		MaxTokens:    maxTokens,
 		System:       system,
 		Messages:     messages,
-		CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		CacheControl: &anthropicCacheControl{Type: "ephemeral", TTL: "1h"},
 	}
 	if req.Temperature > 0 {
 		temp := req.Temperature
