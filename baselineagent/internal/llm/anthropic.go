@@ -39,7 +39,12 @@ type anthropicMessagesRequest struct {
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicToolSpec    `json:"tools,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 	Temperature  *float64               `json:"temperature,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
 }
 
 type anthropicOutputConfig struct {
@@ -253,10 +258,11 @@ func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequ
 		maxTokens = defaultAnthropicMaxTokens
 	}
 	payload := anthropicMessagesRequest{
-		Model:     strings.TrimSpace(req.Model),
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages:  messages,
+		Model:        strings.TrimSpace(req.Model),
+		MaxTokens:    maxTokens,
+		System:       system,
+		Messages:     messages,
+		CacheControl: &anthropicCacheControl{Type: "ephemeral"},
 	}
 	if req.Temperature > 0 {
 		temp := req.Temperature

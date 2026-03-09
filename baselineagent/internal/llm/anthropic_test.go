@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,39 @@ func TestToAnthropicMessagesToolUseIncludesEmptyInputObject(t *testing.T) {
 	}
 	if len(part.Input) != 0 {
 		t.Fatalf("expected empty input object, got %#v", part.Input)
+	}
+}
+
+func TestBuildAnthropicMessagesRequestIncludesEphemeralCacheControl(t *testing.T) {
+	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
+		Model:    "claude-opus-4-6",
+		Messages: []Message{{Role: RoleUser, Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
+	}
+	if payload.CacheControl == nil {
+		t.Fatal("expected cache_control to be set")
+	}
+	if payload.CacheControl.Type != "ephemeral" {
+		t.Fatalf("expected cache_control type %q, got %q", "ephemeral", payload.CacheControl.Type)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	cacheControl, ok := decoded["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cache_control object in JSON, got %#v", decoded["cache_control"])
+	}
+	if got := cacheControl["type"]; got != "ephemeral" {
+		t.Fatalf("expected cache_control.type %q, got %#v", "ephemeral", got)
 	}
 }
 
