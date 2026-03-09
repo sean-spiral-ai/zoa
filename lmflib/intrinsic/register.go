@@ -1,10 +1,12 @@
 package intrinsic
 
-import "fmt"
+import (
+	"fmt"
 
-import lmfrt "zoa/lmfrt"
+	"zoa/runtime"
+)
 
-func RegisterMixins(registry *lmfrt.Registry) error {
+func RegisterMixins(registry *runtime.Registry) error {
 	if registry == nil {
 		return fmt.Errorf("registry is nil")
 	}

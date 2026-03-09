@@ -1,4 +1,4 @@
-package lmfrt
+package runtime
 
 import (
 	"fmt"

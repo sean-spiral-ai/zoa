@@ -1,4 +1,4 @@
-package lmfrt_test
+package runtime_test
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 func TestTaskContextSqlExecQueryBasicCRUD(t *testing.T) {
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
@@ -52,7 +52,7 @@ func TestTaskContextSqlExecQueryBasicCRUD(t *testing.T) {
 }
 
 func TestTaskContextSqlTxRollbackOnError(t *testing.T) {
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
@@ -88,7 +88,7 @@ func TestTaskContextSqlTxRollbackOnError(t *testing.T) {
 }
 
 func TestNewTaskContextRequiresSQLite(t *testing.T) {
-	_, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	_, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD: t.TempDir(),
 	})
 	if err == nil {
@@ -97,12 +97,12 @@ func TestNewTaskContextRequiresSQLite(t *testing.T) {
 }
 
 func TestTaskManagerSpawnUsesSQLitePath(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.sql.counter",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if _, err := tc.SqlExec(`CREATE TABLE IF NOT EXISTS test__counter(value INTEGER NOT NULL)`); err != nil {
 				return nil, err
 			}
@@ -117,7 +117,7 @@ func TestTaskManagerSpawnUsesSQLitePath(t *testing.T) {
 		},
 	})
 
-	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
@@ -125,11 +125,11 @@ func TestTaskManagerSpawnUsesSQLitePath(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	first, err := runTaskAndWaitSnapshot(manager, "test.sql.counter", nil, lmfrt.SpawnOptions{})
+	first, err := runTaskAndWaitSnapshot(manager, "test.sql.counter", nil, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	second, err := runTaskAndWaitSnapshot(manager, "test.sql.counter", nil, lmfrt.SpawnOptions{})
+	second, err := runTaskAndWaitSnapshot(manager, "test.sql.counter", nil, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -143,12 +143,12 @@ func TestTaskManagerSpawnUsesSQLitePath(t *testing.T) {
 }
 
 func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.__init__",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if _, err := tc.SqlExec(`CREATE TABLE IF NOT EXISTS test__init_runs(id INTEGER PRIMARY KEY AUTOINCREMENT)`); err != nil {
 				return nil, err
 			}
@@ -158,19 +158,19 @@ func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
-	registry.MustRegister(&lmfrt.Function{
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.noop",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
-	registry.MustRegister(&lmfrt.Function{
+	registry.MustRegister(&runtime.Function{
 		ID:          "ztest.__init__",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if _, err := tc.SqlExec(`INSERT INTO test__init_runs DEFAULT VALUES`); err != nil {
 				return nil, err
 			}
@@ -178,7 +178,7 @@ func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
 		},
 	})
 
-	manager, err := lmfrt.NewTaskManagerWithContext(context.Background(), registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManagerWithContext(context.Background(), registry, runtime.TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
@@ -190,11 +190,11 @@ func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	checkFn := &lmfrt.Function{
+	checkFn := &runtime.Function{
 		ID:          "test.count_init_runs",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			rows, err := tc.SqlQuery(`SELECT COUNT(*) AS c FROM test__init_runs`)
 			if err != nil {
 				return nil, err
@@ -204,7 +204,7 @@ func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
 	}
 	registry.MustRegister(checkFn)
 
-	countRes, err := runTaskAndWaitSnapshot(manager, checkFn.ID, map[string]any{}, lmfrt.SpawnOptions{})
+	countRes, err := runTaskAndWaitSnapshot(manager, checkFn.ID, map[string]any{}, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("run count: %v", err)
 	}
@@ -214,16 +214,16 @@ func TestTaskManagerInitRunsInitFunctions(t *testing.T) {
 }
 
 func TestTaskManagerInitReturnsError(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.__init__",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			return nil, fmt.Errorf("boom")
 		},
 	})
-	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
@@ -237,18 +237,18 @@ func TestTaskManagerInitReturnsError(t *testing.T) {
 }
 
 func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.log.simple",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
 
 	dbPath := filepath.Join(t.TempDir(), "state.db")
-	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: dbPath,
 	})
 	if err != nil {
@@ -256,7 +256,7 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	taskID, err := manager.Spawn("test.log.simple", map[string]any{}, lmfrt.SpawnOptions{})
+	taskID, err := manager.Spawn("test.log.simple", map[string]any{}, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("spawn task: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 		t.Fatalf("task wait timed out")
 	}
 
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: dbPath,
 	})
@@ -278,7 +278,7 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 	defer func() { _ = tc.Close() }()
 
 	res, err := tc.SqlQuery(
-		`SELECT task_id FROM lmfrt__task_log WHERE task_id = ?`,
+		`SELECT task_id FROM runtime__task_log WHERE task_id = ?`,
 		taskID,
 	)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 	if len(res.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(res.Rows))
 	}
-	summaries, err := lmfrt.LogState(tc).Summaries(10, false, true)
+	summaries, err := runtime.LogState(tc).Summaries(10, false, true)
 	if err != nil {
 		t.Fatalf("read log summaries: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 		if item.FunctionID != "test.log.simple" {
 			t.Fatalf("unexpected function_id: %#v", item.FunctionID)
 		}
-		if item.Status != lmfrt.TaskStatusDone {
+		if item.Status != runtime.TaskStatusDone {
 			t.Fatalf("unexpected status: %#v", item.Status)
 		}
 	}
@@ -313,17 +313,17 @@ func TestTaskManagerPersistsTaskLogInSQLite(t *testing.T) {
 }
 
 func TestTaskManagerInitOnlyOnce(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.__init__",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
 
-	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
@@ -340,12 +340,12 @@ func TestTaskManagerInitOnlyOnce(t *testing.T) {
 }
 
 func TestRegisterPumpFromInitRuns(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.__init__",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if _, err := tc.SqlExec(`CREATE TABLE IF NOT EXISTS test__pump_runs(id INTEGER PRIMARY KEY AUTOINCREMENT)`); err != nil {
 				return nil, err
 			}
@@ -355,22 +355,22 @@ func TestRegisterPumpFromInitRuns(t *testing.T) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
-	registry.MustRegister(&lmfrt.Function{
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.pump.tick",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if _, err := tc.SqlExec(`INSERT INTO test__pump_runs DEFAULT VALUES`); err != nil {
 				return nil, err
 			}
 			return map[string]any{"ok": true}, nil
 		},
 	})
-	registry.MustRegister(&lmfrt.Function{
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.pump.count",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			rows, err := tc.SqlQuery(`SELECT COUNT(*) AS c FROM test__pump_runs`)
 			if err != nil {
 				return nil, err
@@ -379,7 +379,7 @@ func TestRegisterPumpFromInitRuns(t *testing.T) {
 		},
 	})
 
-	manager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
 	if err != nil {
@@ -393,7 +393,7 @@ func TestRegisterPumpFromInitRuns(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		res, err := runTaskAndWaitSnapshot(manager, "test.pump.count", map[string]any{}, lmfrt.SpawnOptions{})
+		res, err := runTaskAndWaitSnapshot(manager, "test.pump.count", map[string]any{}, runtime.SpawnOptions{})
 		if err != nil {
 			t.Fatalf("count pump runs: %v", err)
 		}
@@ -408,25 +408,25 @@ func TestRegisterPumpFromInitRuns(t *testing.T) {
 }
 
 func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
-	registry := lmfrt.NewRegistry()
-	registry.MustRegister(&lmfrt.Function{
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
 		ID:          "test.noop",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			return map[string]any{"ok": true}, nil
 		},
 	})
 
 	dbPath := filepath.Join(t.TempDir(), "state.db")
-	manager1, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager1, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: dbPath,
 	})
 	if err != nil {
 		t.Fatalf("create first task manager: %v", err)
 	}
 
-	firstID, err := manager1.Spawn("test.noop", map[string]any{}, lmfrt.SpawnOptions{})
+	firstID, err := manager1.Spawn("test.noop", map[string]any{}, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("spawn first task: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 		t.Fatalf("unexpected first task id: %s", firstID)
 	}
 
-	secondID, err := manager1.Spawn("test.noop", map[string]any{}, lmfrt.SpawnOptions{})
+	secondID, err := manager1.Spawn("test.noop", map[string]any{}, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("spawn second task: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 		t.Fatalf("close first task manager: %v", err)
 	}
 
-	manager2, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	manager2, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath: dbPath,
 	})
 	if err != nil {
@@ -459,7 +459,7 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	}
 	defer func() { _ = manager2.Close() }()
 
-	thirdID, err := manager2.Spawn("test.noop", map[string]any{}, lmfrt.SpawnOptions{})
+	thirdID, err := manager2.Spawn("test.noop", map[string]any{}, runtime.SpawnOptions{})
 	if err != nil {
 		t.Fatalf("spawn third task: %v", err)
 	}
@@ -471,23 +471,23 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	}
 }
 
-func runTaskAndWaitSnapshot(manager *lmfrt.TaskManager, functionID string, input map[string]any, opts lmfrt.SpawnOptions) (lmfrt.TaskSnapshot, error) {
+func runTaskAndWaitSnapshot(manager *runtime.TaskManager, functionID string, input map[string]any, opts runtime.SpawnOptions) (runtime.TaskSnapshot, error) {
 	taskID, err := manager.Spawn(functionID, input, opts)
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
 	snapshot, _, err := manager.Wait(taskID, 0)
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
-	if snapshot.Status == lmfrt.TaskStatusFailed {
+	if snapshot.Status == runtime.TaskStatusFailed {
 		if snapshot.Error == "" {
-			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+			return runtime.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
 		}
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+		return runtime.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
 	}
-	if snapshot.Status != lmfrt.TaskStatusDone {
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
+	if snapshot.Status != runtime.TaskStatusDone {
+		return runtime.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
 	}
 	return snapshot, nil
 }

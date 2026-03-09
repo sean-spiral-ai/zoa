@@ -1,4 +1,4 @@
-package lmfrt
+package runtime
 
 import (
 	"context"
@@ -133,6 +133,143 @@ func TestTaskLogStateHideByDefaultFilter(t *testing.T) {
 	}
 	if len(withHidden) != 2 {
 		t.Fatalf("expected 2 summaries with hidden included, got %d", len(withHidden))
+	}
+}
+
+func TestTaskLogStateMigrateFromLmfrt(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	tc, err := NewTaskContext(context.Background(), TaskContextOptions{
+		CWD:        t.TempDir(),
+		SQLitePath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("create task context: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	// Create the old lmfrt__task_log table and insert a record.
+	if _, err := tc.SqlExec(`CREATE TABLE lmfrt__task_log (
+		task_id TEXT PRIMARY KEY,
+		function_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		started_at TEXT,
+		finished_at TEXT,
+		output_json TEXT,
+		error_text TEXT,
+		hide_by_default INTEGER NOT NULL DEFAULT 0,
+		input_json TEXT,
+		conversation_json TEXT,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create old table: %v", err)
+	}
+	if _, err := tc.SqlExec(`CREATE INDEX lmfrt__task_log_status_updated_idx ON lmfrt__task_log(status, updated_at DESC)`); err != nil {
+		t.Fatalf("create old index: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tc.SqlExec(
+		`INSERT INTO lmfrt__task_log(task_id, function_id, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		"task-legacy", "test.legacy", string(TaskStatusDone), now, now,
+	); err != nil {
+		t.Fatalf("insert old record: %v", err)
+	}
+
+	// Now run Init(), which should migrate the table.
+	state := LogState(tc)
+	if err := state.Init(); err != nil {
+		t.Fatalf("init (with migration): %v", err)
+	}
+
+	// Old table should be gone.
+	rows, err := tc.SqlQuery(`SELECT name FROM sqlite_master WHERE type='table' AND name='lmfrt__task_log'`)
+	if err != nil {
+		t.Fatalf("check old table: %v", err)
+	}
+	if len(rows.Rows) != 0 {
+		t.Fatalf("old lmfrt__task_log table should not exist after migration")
+	}
+
+	// New table should have the migrated record.
+	got, err := state.Get("task-legacy")
+	if err != nil {
+		t.Fatalf("get migrated record: %v", err)
+	}
+	if got.FunctionID != "test.legacy" || got.Status != TaskStatusDone {
+		t.Fatalf("unexpected migrated record: %#v", got.TaskSnapshot)
+	}
+
+	// Old index should be gone, new index should exist.
+	idxRows, err := tc.SqlQuery(`SELECT name FROM sqlite_master WHERE type='index' AND name='lmfrt__task_log_status_updated_idx'`)
+	if err != nil {
+		t.Fatalf("check old index: %v", err)
+	}
+	if len(idxRows.Rows) != 0 {
+		t.Fatalf("old index should not exist after migration")
+	}
+	newIdxRows, err := tc.SqlQuery(`SELECT name FROM sqlite_master WHERE type='index' AND name='runtime__task_log_status_updated_idx'`)
+	if err != nil {
+		t.Fatalf("check new index: %v", err)
+	}
+	if len(newIdxRows.Rows) != 1 {
+		t.Fatalf("new index should exist after migration")
+	}
+}
+
+func TestTaskLogStateMigrateSkipsWhenBothExist(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	tc, err := NewTaskContext(context.Background(), TaskContextOptions{
+		CWD:        t.TempDir(),
+		SQLitePath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("create task context: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	// Create both old and new tables.
+	for _, table := range []string{"lmfrt__task_log", "runtime__task_log"} {
+		if _, err := tc.SqlExec(`CREATE TABLE "` + table + `" (
+			task_id TEXT PRIMARY KEY,
+			function_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			output_json TEXT,
+			error_text TEXT,
+			hide_by_default INTEGER NOT NULL DEFAULT 0,
+			input_json TEXT,
+			conversation_json TEXT,
+			updated_at TEXT NOT NULL
+		)`); err != nil {
+			t.Fatalf("create table %s: %v", table, err)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// Put a record in the NEW table.
+	if _, err := tc.SqlExec(
+		`INSERT INTO runtime__task_log(task_id, function_id, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		"task-new", "test.new", string(TaskStatusDone), now, now,
+	); err != nil {
+		t.Fatalf("insert new record: %v", err)
+	}
+
+	// Init should NOT clobber the new table with the old one.
+	state := LogState(tc)
+	if err := state.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	got, err := state.Get("task-new")
+	if err != nil {
+		t.Fatalf("get new record: %v", err)
+	}
+	if got.FunctionID != "test.new" {
+		t.Fatalf("new table record should be preserved, got: %#v", got.TaskSnapshot)
 	}
 }
 

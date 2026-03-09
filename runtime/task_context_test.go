@@ -1,4 +1,4 @@
-package lmfrt_test
+package runtime_test
 
 import (
 	"context"
@@ -10,15 +10,15 @@ import (
 	"time"
 
 	baselineagent "zoa/baselineagent"
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 func TestProgrammaticGuard(t *testing.T) {
-	guard := &lmfrt.Function{
+	guard := &runtime.Function{
 		ID:          "test.local.programmatic_guard",
 		WhenToUse:   "test only",
 		InputSchema: map[string]any{"type": "object"},
-		Exec: func(_ *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(_ *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 			raw, ok := input["value"]
 			if !ok {
 				return nil, fmt.Errorf("missing value")
@@ -42,9 +42,9 @@ func TestProgrammaticGuard(t *testing.T) {
 	}
 
 	t.Run("fails for non-positive", func(t *testing.T) {
-		registry := lmfrt.NewRegistry()
+		registry := runtime.NewRegistry()
 		registry.MustRegister(guard)
-		manager, err := lmfrt.NewTaskManagerWithContext(context.Background(), registry, lmfrt.TaskManagerOptions{
+		manager, err := runtime.NewTaskManagerWithContext(context.Background(), registry, runtime.TaskManagerOptions{
 			SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 		})
 		if err != nil {
@@ -58,9 +58,9 @@ func TestProgrammaticGuard(t *testing.T) {
 	})
 
 	t.Run("passes for positive", func(t *testing.T) {
-		registry := lmfrt.NewRegistry()
+		registry := runtime.NewRegistry()
 		registry.MustRegister(guard)
-		manager, err := lmfrt.NewTaskManagerWithContext(context.Background(), registry, lmfrt.TaskManagerOptions{
+		manager, err := runtime.NewTaskManagerWithContext(context.Background(), registry, runtime.TaskManagerOptions{
 			SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 		})
 		if err != nil {
@@ -82,12 +82,12 @@ func TestNLExecContextMemory(t *testing.T) {
 	model := requireModel(t)
 	tc := newTaskContext(t, model)
 
-	first, err := lmfrt.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
+	first, err := runtime.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("first nlexec failed: %v", err)
 	}
 
-	second, err := lmfrt.NLExecTyped[int](tc, "What number did you just return? Return JSON number only.", nil)
+	second, err := runtime.NLExecTyped[int](tc, "What number did you just return? Return JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("second nlexec failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestNLConditionIsolation(t *testing.T) {
 	model := requireModel(t)
 	tc := newTaskContext(t, model)
 
-	first, err := lmfrt.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
+	first, err := runtime.NLExecTyped[int](tc, "Return the number 7 as JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("first nlexec failed: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestNLConditionIsolation(t *testing.T) {
 		t.Fatalf("condition failed unexpectedly: %v", err)
 	}
 
-	second, err := lmfrt.NLExecTyped[int](tc, "What number did you just return earlier? Return JSON number only.", nil)
+	second, err := runtime.NLExecTyped[int](tc, "What number did you just return earlier? Return JSON number only.", nil)
 	if err != nil {
 		t.Fatalf("second nlexec failed: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestNLConditionFailure(t *testing.T) {
 		t.Fatalf("expected NL condition failure")
 	}
 
-	var condErr *lmfrt.NLConditionError
+	var condErr *runtime.NLConditionError
 	if !asConditionErr(err, &condErr) {
 		t.Fatalf("expected NLConditionError, got: %T %v", err, err)
 	}
@@ -193,9 +193,9 @@ func requireModel(t *testing.T) string {
 	return ""
 }
 
-func newTaskContext(t *testing.T, model string) *lmfrt.TaskContext {
+func newTaskContext(t *testing.T, model string) *runtime.TaskContext {
 	t.Helper()
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:         t.TempDir(),
 		Model:       model,
 		MaxTurns:    24,
@@ -209,27 +209,27 @@ func newTaskContext(t *testing.T, model string) *lmfrt.TaskContext {
 	return tc
 }
 
-func asConditionErr(err error, target **lmfrt.NLConditionError) bool {
+func asConditionErr(err error, target **runtime.NLConditionError) bool {
 	return errors.As(err, target)
 }
 
-func runTaskAndWait(manager *lmfrt.TaskManager, functionID string, input map[string]any) (lmfrt.TaskSnapshot, error) {
-	taskID, err := manager.Spawn(functionID, input, lmfrt.SpawnOptions{})
+func runTaskAndWait(manager *runtime.TaskManager, functionID string, input map[string]any) (runtime.TaskSnapshot, error) {
+	taskID, err := manager.Spawn(functionID, input, runtime.SpawnOptions{})
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
 	snapshot, _, err := manager.Wait(taskID, 0)
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
-	if snapshot.Status == lmfrt.TaskStatusFailed {
+	if snapshot.Status == runtime.TaskStatusFailed {
 		if strings.TrimSpace(snapshot.Error) == "" {
-			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+			return runtime.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
 		}
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+		return runtime.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
 	}
-	if snapshot.Status != lmfrt.TaskStatusDone {
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
+	if snapshot.Status != runtime.TaskStatusDone {
+		return runtime.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
 	}
 	return snapshot, nil
 }

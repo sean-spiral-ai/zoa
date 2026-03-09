@@ -1,6 +1,6 @@
 package intrinsic
 
-import lmfrt "zoa/lmfrt"
+import "zoa/runtime"
 
 const lmFunctionSystemMixinContent = `LM Function system context:
 - LM Functions are reusable workflows executed by the LM Function Runtime.
@@ -19,18 +19,18 @@ Repository conventions to follow:
 - Keep behavior deterministic where possible and avoid hidden side effects.
 
 What LM Functions look like in code (brief):
-- Return a *lmfrt.Function (Go struct) with:
+- Return a *runtime.Function (Go struct) with:
   - ID
   - WhenToUse
   - InputSchema / OutputSchema
-  - Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error)
+  - Exec: func(tc *runtime.TaskContext, input map[string]any) (map[string]any, error)
 - Example shape:
-  func myFunction() *lmfrt.Function { ... }
-  func runMyFunction(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) { ... }
+  func myFunction() *runtime.Function { ... }
+  func runMyFunction(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) { ... }
 - Register in RegisterFunctions(...) via registry.Register(myFunction()).
 
 TaskContext reference:
-- Read lmfrt/task_context.go to understand available runtime APIs:
+- Read runtime/task_context.go to understand available runtime APIs:
   - SqlExec / SqlQuery / SqlTx
   - Spawn / RegisterPump / NewLmFunctionTools
   - LoadMixin
@@ -45,7 +45,7 @@ Filesystem APIs (GetStateDir, GetTmpDir, GetAssetsDir):
   Use for intermediate/scratch files that the caller doesn't need after the function returns.
 - GetAssetsDir() returns the path to lmflib/<namespace>/assets/ in the source tree.
   Use for bundled scripts, stylesheets, configs, or other static files shipped with the function.
-  Set by populating AssetsDir on *lmfrt.Function (typically via runtime.Caller in register.go).
+  Set by populating AssetsDir on *runtime.Function (typically via runtime.Caller in register.go).
 - Common pattern: copy assets into the state dir on first run, then operate from the state dir.
   See lmflib/md_to_pdf/ for a reference: it copies a Python script + CSS to the state dir,
   creates a venv there, installs deps once (guarded by a marker file), and runs from the state dir.
@@ -62,8 +62,8 @@ Execution requirements:
 - Run targeted validation commands (at least relevant go test packages).
 `
 
-func lmFunctionSystemMixin() *lmfrt.Mixin {
-	return &lmfrt.Mixin{
+func lmFunctionSystemMixin() *runtime.Mixin {
+	return &runtime.Mixin{
 		ID:        "intrinsic.lmfunction_system",
 		WhenToUse: "Use when you need authoritative context about LM Function architecture, LM Mixins, conventions, and TaskContext APIs while designing or editing LM Functions.",
 		Content:   lmFunctionSystemMixinContent,

@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
-func mdToPDFFunction(assets string) *lmfrt.Function {
-	return &lmfrt.Function{
+func mdToPDFFunction(assets string) *runtime.Function {
+	return &runtime.Function{
 		ID:        "md_to_pdf.md_to_pdf",
 		WhenToUse: "Convert a Markdown file to a styled PDF document.",
 		InputSchema: map[string]any{
@@ -34,7 +34,7 @@ func mdToPDFFunction(assets string) *lmfrt.Function {
 	}
 }
 
-func execMdToPDF(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+func execMdToPDF(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 	mdPath, _ := input["markdown_path"].(string)
 	mdPath = strings.TrimSpace(mdPath)
 	if mdPath == "" {
@@ -75,7 +75,7 @@ func execMdToPDF(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, e
 	}, nil
 }
 
-func ensureStateDirReady(tc *lmfrt.TaskContext) error {
+func ensureStateDirReady(tc *runtime.TaskContext) error {
 	stateDir, err := tc.GetStateDir()
 	if err != nil {
 		return err

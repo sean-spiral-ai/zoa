@@ -10,14 +10,14 @@ import (
 
 	baselineagent "zoa/baselineagent"
 	"zoa/lmflib"
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 // state centralizes gateway SQLite state reads/writes.
 // Convention: all gateway mutable state access should go through this type.
 // The namespace initializer `gateway.__init__` should call `state.init()`.
 type state struct {
-	tc *lmfrt.TaskContext
+	tc *runtime.TaskContext
 }
 
 type inboundRow struct {
@@ -44,7 +44,7 @@ const queryConversationEventsBySession = `SELECT id, created_at, message_json
 		 WHERE session = ?
 		 ORDER BY id`
 
-func newState(tc *lmfrt.TaskContext) *state {
+func newState(tc *runtime.TaskContext) *state {
 	return &state{tc: tc}
 }
 
@@ -546,7 +546,7 @@ func (s *state) sqlContext() context.Context {
 
 func (s *state) insertOutbox(session, channel, text string, inReplyTo *int64, at time.Time) (int64, error) {
 	var (
-		res lmfrt.SqlExecResult
+		res runtime.SqlExecResult
 		err error
 	)
 	channel = strings.TrimSpace(channel)

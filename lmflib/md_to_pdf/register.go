@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"runtime"
 
-	lmfrt "zoa/lmfrt"
+	zoaruntime "zoa/runtime"
 )
 
-func RegisterFunctions(registry *lmfrt.Registry) error {
+func RegisterFunctions(registry *zoaruntime.Registry) error {
 	if registry == nil {
 		return fmt.Errorf("registry is nil")
 	}

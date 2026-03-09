@@ -1,4 +1,4 @@
-package lmfrt_test
+package runtime_test
 
 import (
 	"context"
@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 func TestTaskContextGetStateDirCreatesPersistentNamespacePath(t *testing.T) {
 	root := t.TempDir()
 	sqlitePath := filepath.Join(root, "state.db")
 
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        root,
 		SQLitePath: sqlitePath,
 		Namespace:  "md_to_pdf",
@@ -61,7 +61,7 @@ func TestTaskContextGetStateDirCreatesPersistentNamespacePath(t *testing.T) {
 }
 
 func TestTaskContextGetStateDirRequiresNamespace(t *testing.T) {
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
@@ -87,7 +87,7 @@ func TestTaskContextGetAssetsDir(t *testing.T) {
 			t.Fatalf("create assets dir: %v", err)
 		}
 
-		tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+		tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 			CWD:        root,
 			SQLitePath: filepath.Join(root, "state.db"),
 			Namespace:  "md_to_pdf",
@@ -108,7 +108,7 @@ func TestTaskContextGetAssetsDir(t *testing.T) {
 	})
 
 	t.Run("errors when assets path is not configured", func(t *testing.T) {
-		tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+		tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 			CWD:        t.TempDir(),
 			SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 			Namespace:  "md_to_pdf",
@@ -129,7 +129,7 @@ func TestTaskContextGetAssetsDir(t *testing.T) {
 }
 
 func TestTaskContextGetTmpDirCreatesUniqueDirsAndCleansOnClose(t *testing.T) {
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 		Namespace:  "md_to_pdf",
@@ -153,7 +153,7 @@ func TestTaskContextGetTmpDirCreatesUniqueDirsAndCleansOnClose(t *testing.T) {
 		if _, err := os.Stat(dir); err != nil {
 			t.Fatalf("stat tmp dir %q: %v", dir, err)
 		}
-		if !strings.HasPrefix(filepath.Base(dir), "lmfrt-md_to_pdf-") {
+		if !strings.HasPrefix(filepath.Base(dir), "zoa-runtime-md_to_pdf-") {
 			t.Fatalf("tmp dir %q does not use namespace prefix", dir)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644); err != nil {

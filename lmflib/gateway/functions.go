@@ -15,7 +15,7 @@ import (
 	"zoa/internal/llmtrace"
 	"zoa/internal/tracecontrol"
 	"zoa/lmflib"
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 	"zoa/reliable"
 )
 
@@ -50,8 +50,8 @@ Prefer LM Functions for structured/reusable workflows and use regular coding too
 
 var errInboundLeaseLost = errors.New("inbound lease lost")
 
-func initFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func initFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "gateway.__init__",
 		WhenToUse: "Run on startup to ensure gateway SQLite schema exists and is ready.",
 		InputSchema: map[string]any{
@@ -65,7 +65,7 @@ func initFunction() *lmfrt.Function {
 			},
 			"required": []string{"ok"},
 		},
-		Exec: func(tc *lmfrt.TaskContext, _ map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
 			if err := newState(tc).init(); err != nil {
 				return nil, err
 			}
@@ -85,8 +85,8 @@ func initFunction() *lmfrt.Function {
 	}
 }
 
-func recvFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func recvFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "gateway.recv",
 		WhenToUse: "Queue a user message into a gateway session for ordered processing.",
 		InputSchema: map[string]any{
@@ -114,7 +114,7 @@ func recvFunction() *lmfrt.Function {
 			},
 			"required": []string{"accepted", "session", "inbound_id", "decision", "queue_len"},
 		},
-		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
 			session, err := gatewaySessionInput(input)
 			if err != nil {
@@ -141,7 +141,7 @@ func recvFunction() *lmfrt.Function {
 			if _, err := tc.Spawn("gateway.pump", map[string]any{
 				"session": session,
 				"limit":   1,
-			}, lmfrt.SpawnOptions{HideInLogByDefault: true}); err == nil {
+			}, runtime.SpawnOptions{HideInLogByDefault: true}); err == nil {
 				decision = "queued_pump_triggered"
 			} else {
 				decision = "queued_pump_trigger_failed"
@@ -161,8 +161,8 @@ func recvFunction() *lmfrt.Function {
 	}
 }
 
-func pumpFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func pumpFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "gateway.pump",
 		WhenToUse: "Process queued inbound messages for a gateway session in strict id order.",
 		InputSchema: map[string]any{
@@ -183,7 +183,7 @@ func pumpFunction() *lmfrt.Function {
 			},
 			"required": []string{"session", "processed", "queue_len", "last_inbound_id", "last_outbox_id"},
 		},
-		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
 			session, err := gatewaySessionInput(input)
 			if err != nil {
@@ -237,7 +237,7 @@ type inboundPumpJob struct {
 	delta []baselineagent.ConversationMessage
 }
 
-func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
+func newInboundJobCompleter(state *state, tc *runtime.TaskContext, session string, lastOutboxID *int64) *reliable.JobCompleter[inboundPumpJob] {
 	return &reliable.JobCompleter[inboundPumpJob]{
 		MaxAttempts: inboundMaxAttempts,
 		Logger:      slog.Default().With("component", "inbound_pump", "session", session),
@@ -359,8 +359,8 @@ func newInboundJobCompleter(state *state, tc *lmfrt.TaskContext, session string,
 	}
 }
 
-func outboxSinceFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func outboxSinceFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "gateway.outbox_since",
 		WhenToUse: "Poll outbound gateway messages since last seen id for a session.",
 		InputSchema: map[string]any{
@@ -394,7 +394,7 @@ func outboxSinceFunction() *lmfrt.Function {
 			},
 			"required": []string{"session", "count", "messages", "max_id"},
 		},
-		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
 			session, err := gatewaySessionInput(input)
 			if err != nil {
@@ -446,8 +446,8 @@ func outboxSinceFunction() *lmfrt.Function {
 	}
 }
 
-func outboxMaxIDFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func outboxMaxIDFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "gateway.outbox_max_id",
 		WhenToUse: "Return the current maximum outbox row ID for a session.",
 		InputSchema: map[string]any{
@@ -463,7 +463,7 @@ func outboxMaxIDFunction() *lmfrt.Function {
 			},
 			"required": []string{"max_id"},
 		},
-		Exec: func(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+		Exec: func(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 			state := newState(tc)
 			session, err := gatewaySessionInput(input)
 			if err != nil {
@@ -478,7 +478,7 @@ func outboxMaxIDFunction() *lmfrt.Function {
 	}
 }
 
-func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow) (string, []baselineagent.ConversationMessage, error) {
+func processInboundMessage(state *state, tc *runtime.TaskContext, row *inboundRow) (string, []baselineagent.ConversationMessage, error) {
 	if row == nil {
 		return "", nil, fmt.Errorf("inbound row is nil")
 	}
@@ -493,7 +493,7 @@ func processInboundMessage(state *state, tc *lmfrt.TaskContext, row *inboundRow)
 	return processChatMessage(state, tc, input, row.Session, row.Text)
 }
 
-func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]any, session string, message string) (string, []baselineagent.ConversationMessage, error) {
+func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]any, session string, message string) (string, []baselineagent.ConversationMessage, error) {
 	model, err := lmflib.StringInput(input, "model", false)
 	if err != nil {
 		return "", nil, err
@@ -605,7 +605,7 @@ func processChatMessage(state *state, tc *lmfrt.TaskContext, input map[string]an
 	return text, delta, nil
 }
 
-func renderSlashResponse(state *state, tc *lmfrt.TaskContext, session string, text string) (string, error) {
+func renderSlashResponse(state *state, tc *runtime.TaskContext, session string, text string) (string, error) {
 	command := strings.Fields(strings.TrimSpace(text))
 	if len(command) == 0 {
 		return "", fmt.Errorf("invalid command")
@@ -727,12 +727,12 @@ func resolveTraceControlURL() string {
 	return defaultTraceControlURL
 }
 
-func readTaskLogSummaries(tc *lmfrt.TaskContext, limit int, onlyRunning bool, includeHidden bool) ([]string, error) {
+func readTaskLogSummaries(tc *runtime.TaskContext, limit int, onlyRunning bool, includeHidden bool) ([]string, error) {
 	if tc == nil {
 		return nil, fmt.Errorf("task context is nil")
 	}
 
-	summaries, err := lmfrt.LogState(tc).Summaries(limit, onlyRunning, includeHidden)
+	summaries, err := runtime.LogState(tc).Summaries(limit, onlyRunning, includeHidden)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package lmfrt
+package runtime
 
 import (
 	"context"
@@ -175,7 +175,7 @@ func (t *TaskContext) GetStateDir() (string, error) {
 
 // GetTmpDir creates a new temporary directory and registers it for cleanup on Close().
 func (t *TaskContext) GetTmpDir() (string, error) {
-	dir, err := os.MkdirTemp("", "lmfrt-"+t.namespace+"-*")
+	dir, err := os.MkdirTemp("", "zoa-runtime-"+t.namespace+"-*")
 	if err != nil {
 		return "", fmt.Errorf("create tmp dir: %w", err)
 	}

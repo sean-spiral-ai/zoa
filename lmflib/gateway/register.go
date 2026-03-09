@@ -3,10 +3,10 @@ package gateway
 import (
 	"fmt"
 
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
-func RegisterFunctions(registry *lmfrt.Registry) error {
+func RegisterFunctions(registry *runtime.Registry) error {
 	if registry == nil {
 		return fmt.Errorf("registry is nil")
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"zoa/lmflib"
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 const diverseIdeationPrompt = `You are generating a maximally diverse set of ideas.
@@ -27,8 +27,8 @@ Format your final output as a numbered list with "Title: Description" format.
 
 Remember: The goal is HIGH RECALL of the idea space, not filtering for quality. Bad-but-different ideas are better than good-but-similar ideas. Quality filtering happens later.`
 
-func diverseIdeationFunction() *lmfrt.Function {
-	return &lmfrt.Function{
+func diverseIdeationFunction() *runtime.Function {
+	return &runtime.Function{
 		ID:        "diverse_ideation.diverse_ideation",
 		WhenToUse: "Use when brainstorming to generate a maximally diverse set of ideas on any topic. Employs Chain-of-Thought prompting to avoid LLM mode collapse and produce high-variance output with genuinely different ideas rather than variations on the same theme. Best for business ideas, product concepts, strategies, solutions, or any creative task needing 30-50 diverse ideas. Always follow with a separate assessment/pruning step.",
 		InputSchema: map[string]any{
@@ -57,7 +57,7 @@ func diverseIdeationFunction() *lmfrt.Function {
 	}
 }
 
-func runDiverseIdeation(tc *lmfrt.TaskContext, input map[string]any) (map[string]any, error) {
+func runDiverseIdeation(tc *runtime.TaskContext, input map[string]any) (map[string]any, error) {
 	brief, err := lmflib.StringInput(input, "brief", true)
 	if err != nil {
 		return nil, err

@@ -11,7 +11,7 @@ import (
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
 	mdtopdf "zoa/lmflib/md_to_pdf"
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 const (
@@ -57,7 +57,7 @@ type OutboxMessage struct {
 }
 
 type localGatewayClient struct {
-	taskManager  *lmfrt.TaskManager
+	taskManager  *runtime.TaskManager
 	session      string
 	recvDefaults map[string]any
 }
@@ -104,7 +104,7 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 		return nil, fmt.Errorf("timeout_sec must be >= 0")
 	}
 
-	registry := lmfrt.NewRegistry()
+	registry := runtime.NewRegistry()
 	if err := intrinsic.RegisterMixins(registry); err != nil {
 		return nil, fmt.Errorf("register intrinsic mixins: %w", err)
 	}
@@ -118,7 +118,7 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 		return nil, fmt.Errorf("register md_to_pdf functions: %w", err)
 	}
 
-	taskManager, err := lmfrt.NewTaskManager(registry, lmfrt.TaskManagerOptions{
+	taskManager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
 		SQLitePath:    filepath.Join(sessionDir, "state.db"),
 		LLMTraceStore: cfg.LLMTraceStore,
 	})
@@ -174,7 +174,7 @@ func (c *localGatewayClient) Enqueue(message string, channelURI string) (Enqueue
 		input["channel"] = channel
 	}
 
-	snapshot, err := runAndWait(c.taskManager, "gateway.recv", input, lmfrt.SpawnOptions{})
+	snapshot, err := runAndWait(c.taskManager, "gateway.recv", input, runtime.SpawnOptions{})
 	if err != nil {
 		return EnqueueResult{}, err
 	}
@@ -206,7 +206,7 @@ func (c *localGatewayClient) OutboxSince(lastID int64, limit int) ([]OutboxMessa
 		"session": c.session,
 		"last_id": lastID,
 		"limit":   limit,
-	}, lmfrt.SpawnOptions{HideInLogByDefault: true})
+	}, runtime.SpawnOptions{HideInLogByDefault: true})
 	if err != nil {
 		return nil, lastID, err
 	}
@@ -223,7 +223,7 @@ func (c *localGatewayClient) OutboxMaxID() (int64, error) {
 	}
 	snapshot, err := runAndWait(c.taskManager, "gateway.outbox_max_id", map[string]any{
 		"session": c.session,
-	}, lmfrt.SpawnOptions{HideInLogByDefault: true})
+	}, runtime.SpawnOptions{HideInLogByDefault: true})
 	if err != nil {
 		return 0, err
 	}
@@ -231,32 +231,32 @@ func (c *localGatewayClient) OutboxMaxID() (int64, error) {
 	return maxID, nil
 }
 
-func runAndWait(taskManager *lmfrt.TaskManager, functionID string, input map[string]any, opts lmfrt.SpawnOptions) (lmfrt.TaskSnapshot, error) {
+func runAndWait(taskManager *runtime.TaskManager, functionID string, input map[string]any, opts runtime.SpawnOptions) (runtime.TaskSnapshot, error) {
 	if taskManager == nil {
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("task manager is nil")
+		return runtime.TaskSnapshot{}, fmt.Errorf("task manager is nil")
 	}
 	taskID, err := taskManager.Spawn(functionID, input, opts)
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
 	snapshot, _, err := taskManager.Wait(taskID, 0)
 	if err != nil {
-		return lmfrt.TaskSnapshot{}, err
+		return runtime.TaskSnapshot{}, err
 	}
-	if snapshot.Status == lmfrt.TaskStatusFailed {
+	if snapshot.Status == runtime.TaskStatusFailed {
 		if strings.TrimSpace(snapshot.Error) == "" {
-			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
+			return runtime.TaskSnapshot{}, fmt.Errorf("task %s failed", taskID)
 		}
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+		return runtime.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
 	}
-	if snapshot.Status == lmfrt.TaskStatusCanceled {
+	if snapshot.Status == runtime.TaskStatusCanceled {
 		if strings.TrimSpace(snapshot.Error) == "" {
-			return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s canceled", taskID)
+			return runtime.TaskSnapshot{}, fmt.Errorf("task %s canceled", taskID)
 		}
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
+		return runtime.TaskSnapshot{}, fmt.Errorf("%s", snapshot.Error)
 	}
-	if snapshot.Status != lmfrt.TaskStatusDone {
-		return lmfrt.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
+	if snapshot.Status != runtime.TaskStatusDone {
+		return runtime.TaskSnapshot{}, fmt.Errorf("task %s ended in unexpected status %s", taskID, snapshot.Status)
 	}
 	return snapshot, nil
 }

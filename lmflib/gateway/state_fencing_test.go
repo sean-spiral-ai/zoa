@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	lmfrt "zoa/lmfrt"
+	"zoa/runtime"
 )
 
 func TestCompleteInboundSuccessFencedByAttempt(t *testing.T) {
@@ -271,9 +271,9 @@ func TestClaimDueInboundStrictFIFOAdvancesAfterHeadDone(t *testing.T) {
 	}
 }
 
-func newGatewayTestState(t *testing.T) (*state, *lmfrt.TaskContext) {
+func newGatewayTestState(t *testing.T) (*state, *runtime.TaskContext) {
 	t.Helper()
-	tc, err := lmfrt.NewTaskContext(context.Background(), lmfrt.TaskContextOptions{
+	tc, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 	})
@@ -288,7 +288,7 @@ func newGatewayTestState(t *testing.T) (*state, *lmfrt.TaskContext) {
 	return st, tc
 }
 
-func querySingleString(t *testing.T, tc *lmfrt.TaskContext, query string, args ...any) string {
+func querySingleString(t *testing.T, tc *runtime.TaskContext, query string, args ...any) string {
 	t.Helper()
 	res, err := tc.SqlQuery(query, args...)
 	if err != nil {
@@ -305,7 +305,7 @@ func querySingleString(t *testing.T, tc *lmfrt.TaskContext, query string, args .
 	return ""
 }
 
-func querySingleInt64(t *testing.T, tc *lmfrt.TaskContext, query string, args ...any) int64 {
+func querySingleInt64(t *testing.T, tc *runtime.TaskContext, query string, args ...any) int64 {
 	t.Helper()
 	res, err := tc.SqlQuery(query, args...)
 	if err != nil {

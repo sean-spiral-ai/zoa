@@ -1,4 +1,4 @@
-package lmfrt
+package runtime
 
 import (
 	"encoding/json"
@@ -30,7 +30,11 @@ func (s *TaskLogState) Init() error {
 	if err := s.ensureInitialized(); err != nil {
 		return err
 	}
-	if err := s.exec(`CREATE TABLE IF NOT EXISTS lmfrt__task_log (
+	// Migrate: rename old lmfrt__task_log table if it exists and new one doesn't yet.
+	if err := s.migrateFromLmfrt(); err != nil {
+		return fmt.Errorf("migrate lmfrt__task_log: %w", err)
+	}
+	if err := s.exec(`CREATE TABLE IF NOT EXISTS runtime__task_log (
 		task_id TEXT PRIMARY KEY,
 		function_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -44,14 +48,41 @@ func (s *TaskLogState) Init() error {
 		conversation_json TEXT,
 		updated_at TEXT NOT NULL
 	)`); err != nil {
-		return fmt.Errorf("create lmfrt__task_log table: %w", err)
+		return fmt.Errorf("create runtime__task_log table: %w", err)
 	}
-	if err := s.ensureColumn("lmfrt__task_log", "hide_by_default", `INTEGER NOT NULL DEFAULT 0`); err != nil {
-		return fmt.Errorf("ensure lmfrt__task_log.hide_by_default: %w", err)
+	if err := s.ensureColumn("runtime__task_log", "hide_by_default", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("ensure runtime__task_log.hide_by_default: %w", err)
 	}
-	if err := s.exec(`CREATE INDEX IF NOT EXISTS lmfrt__task_log_status_updated_idx ON lmfrt__task_log(status, updated_at DESC)`); err != nil {
-		return fmt.Errorf("create lmfrt__task_log index: %w", err)
+	if err := s.exec(`CREATE INDEX IF NOT EXISTS runtime__task_log_status_updated_idx ON runtime__task_log(status, updated_at DESC)`); err != nil {
+		return fmt.Errorf("create runtime__task_log index: %w", err)
 	}
+	return nil
+}
+
+func (s *TaskLogState) migrateFromLmfrt() error {
+	// Check if the old table exists.
+	rows, err := s.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='lmfrt__task_log'`)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil // Nothing to migrate.
+	}
+	// Check if the new table already exists (avoid clobbering).
+	rows, err = s.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='runtime__task_log'`)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		return nil // New table already exists; skip migration.
+	}
+	// Rename table and index.
+	if err := s.exec(`ALTER TABLE lmfrt__task_log RENAME TO runtime__task_log`); err != nil {
+		return fmt.Errorf("rename table: %w", err)
+	}
+	// Drop old index (ALTER INDEX RENAME not supported in SQLite) — the new one
+	// will be created by Init() immediately after this migration returns.
+	s.exec(`DROP INDEX IF EXISTS lmfrt__task_log_status_updated_idx`)
 	return nil
 }
 
@@ -61,7 +92,7 @@ func (s *TaskLogState) Summaries(limit int, onlyRunning bool, includeHidden bool
 	}
 
 	query := `SELECT task_id, function_id, status, error_text, updated_at, hide_by_default
-		FROM lmfrt__task_log`
+		FROM runtime__task_log`
 	args := []any{}
 	clauses := []string{}
 	if onlyRunning {
@@ -111,7 +142,7 @@ func (s *TaskLogState) Get(taskID string) (TaskLogRecord, error) {
 	rows, err := s.query(
 		`SELECT task_id, function_id, status, created_at, started_at, finished_at,
 			output_json, error_text, hide_by_default, input_json, conversation_json, updated_at
-		FROM lmfrt__task_log
+		FROM runtime__task_log
 		WHERE task_id = ?`,
 		taskID,
 	)
@@ -151,7 +182,7 @@ func (s *TaskLogState) upsert(record TaskLogRecord) error {
 	}
 
 	if err := s.exec(
-		`INSERT INTO lmfrt__task_log(
+		`INSERT INTO runtime__task_log(
 			task_id, function_id, status, created_at, started_at, finished_at,
 			output_json, error_text, hide_by_default, input_json, conversation_json, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -180,7 +211,7 @@ func (s *TaskLogState) upsert(record TaskLogRecord) error {
 		string(conversationJSON),
 		record.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	); err != nil {
-		return fmt.Errorf("upsert lmfrt task log: %w", err)
+		return fmt.Errorf("upsert runtime task log: %w", err)
 	}
 	return nil
 }
@@ -196,7 +227,7 @@ func (s *TaskLogState) MaxTaskSequence() (uint64, error) {
 				ELSE 0
 			END
 		), 0) AS max_id
-		FROM lmfrt__task_log`,
+		FROM runtime__task_log`,
 	)
 	if err != nil {
 		return 0, err
