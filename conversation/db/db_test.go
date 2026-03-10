@@ -91,6 +91,114 @@ func TestLeaseExpiryAndRenewal(t *testing.T) {
 	}
 }
 
+func TestAcquireLeaseValidationAndMissingRef(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.AcquireLease("sessions/default", "   ", time.Minute); err == nil {
+		t.Fatal("acquire lease with blank holder unexpectedly succeeded")
+	}
+	if err := db.AcquireLease("sessions/missing", "runner-1", time.Minute); !errors.Is(err, ErrRefNotFound) {
+		t.Fatalf("acquire missing ref error = %v, want %v", err, ErrRefNotFound)
+	}
+}
+
+func TestAcquireLeaseSameHolderRefreshesExpiry(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.CreateRef("sessions/default", RootHash); err != nil {
+		t.Fatalf("create ref: %v", err)
+	}
+	if err := db.AcquireLease("sessions/default", "runner-1", 50*time.Millisecond); err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+
+	refBefore, err := db.GetRef("sessions/default")
+	if err != nil {
+		t.Fatalf("get ref before reacquire: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if err := db.AcquireLease("sessions/default", "runner-1", time.Minute); err != nil {
+		t.Fatalf("reacquire lease: %v", err)
+	}
+	refAfter, err := db.GetRef("sessions/default")
+	if err != nil {
+		t.Fatalf("get ref after reacquire: %v", err)
+	}
+	if refAfter.LeasedBy != "runner-1" {
+		t.Fatalf("leased by = %q, want runner-1", refAfter.LeasedBy)
+	}
+	if !refAfter.LeaseUntil.After(refBefore.LeaseUntil) {
+		t.Fatalf("lease_until was not extended: before=%v after=%v", refBefore.LeaseUntil, refAfter.LeaseUntil)
+	}
+}
+
+func TestRenewLeaseMissingRefAndSameHolderAfterExpiry(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.RenewLease("sessions/missing", "runner-1", time.Minute); !errors.Is(err, ErrRefNotFound) {
+		t.Fatalf("renew missing ref error = %v, want %v", err, ErrRefNotFound)
+	}
+	if err := db.CreateRef("sessions/default", RootHash); err != nil {
+		t.Fatalf("create ref: %v", err)
+	}
+	if err := db.AcquireLease("sessions/default", "runner-1", 20*time.Millisecond); err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	if err := db.RenewLease("sessions/default", "runner-1", time.Minute); err != nil {
+		t.Fatalf("renew expired lease for same holder: %v", err)
+	}
+	ref, err := db.GetRef("sessions/default")
+	if err != nil {
+		t.Fatalf("get ref: %v", err)
+	}
+	if ref.LeasedBy != "runner-1" {
+		t.Fatalf("leased by = %q, want runner-1", ref.LeasedBy)
+	}
+	if !ref.LeaseUntil.After(time.Now().UTC()) {
+		t.Fatalf("lease_until = %v, want future time", ref.LeaseUntil)
+	}
+}
+
+func TestReleaseLeaseClearsHolderAndIgnoresNonHolder(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.CreateRef("sessions/default", RootHash); err != nil {
+		t.Fatalf("create ref: %v", err)
+	}
+	if err := db.AcquireLease("sessions/default", "runner-1", time.Minute); err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+
+	if err := db.ReleaseLease("sessions/default", "runner-2"); err != nil {
+		t.Fatalf("release lease by non-holder: %v", err)
+	}
+	ref, err := db.GetRef("sessions/default")
+	if err != nil {
+		t.Fatalf("get ref after non-holder release: %v", err)
+	}
+	if ref.LeasedBy != "runner-1" {
+		t.Fatalf("leased by after non-holder release = %q, want runner-1", ref.LeasedBy)
+	}
+
+	if err := db.ReleaseLease("sessions/default", "runner-1"); err != nil {
+		t.Fatalf("release lease: %v", err)
+	}
+	ref, err = db.GetRef("sessions/default")
+	if err != nil {
+		t.Fatalf("get ref after release: %v", err)
+	}
+	if ref.LeasedBy != "" {
+		t.Fatalf("leased by after release = %q, want empty", ref.LeasedBy)
+	}
+	if !ref.LeaseUntil.IsZero() {
+		t.Fatalf("lease_until after release = %v, want zero", ref.LeaseUntil)
+	}
+	if err := db.AcquireLease("sessions/default", "runner-2", time.Minute); err != nil {
+		t.Fatalf("acquire lease after release: %v", err)
+	}
+}
+
 func TestAdvanceRefRejectsOtherLeaseHolder(t *testing.T) {
 	db := openTestDB(t)
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
