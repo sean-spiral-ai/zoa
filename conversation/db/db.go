@@ -23,6 +23,17 @@ type Node struct {
 	CreatedAt  time.Time
 }
 
+type TraceNode struct {
+	ID           int64  `json:"id"`
+	Hash         string `json:"hash"`
+	ParentHash   string `json:"parent_hash"`
+	Role         string `json:"role"`
+	Summary      string `json:"summary"`
+	MessageJSON  string `json:"message_json"`
+	MetadataJSON string `json:"metadata_json"`
+	CreatedAt    string `json:"created_at"`
+}
+
 type Message = llm.Message
 
 type Ref struct {

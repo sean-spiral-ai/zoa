@@ -14,7 +14,6 @@ import (
 
 	convdb "zoa/conversation/db"
 	convrunner "zoa/conversation/runner"
-	"zoa/internal/llmtrace"
 	"zoa/llm"
 	modelpkg "zoa/model"
 	tools "zoa/tools"
@@ -43,14 +42,13 @@ type TaskContextOptions struct {
 	Namespace   string
 	AssetsDir   string
 
-	logger        *slog.Logger
-	sqlDB         sqlExecutor
-	registerPump  func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask     func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools      func() ([]tools.Tool, error)
-	loadMixin     func(id string) (*Mixin, bool)
-	llmtraceStore *llmtrace.Store
-	taskID        string
+	logger       *slog.Logger
+	sqlDB        sqlExecutor
+	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools     func() ([]tools.Tool, error)
+	loadMixin    func(id string) (*Mixin, bool)
+	taskID       string
 }
 
 type TaskContext struct {
@@ -70,7 +68,6 @@ type TaskContext struct {
 	spawnTask          func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
 	lmfTools           func() ([]tools.Tool, error)
 	loadMixin          func(id string) (*Mixin, bool)
-	llmtraceStore      *llmtrace.Store
 	taskID             string
 }
 
@@ -142,21 +139,20 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	tcLogger = tcLogger.With("component", "task_context")
 
 	return &TaskContext{
-		ctx:           ctx,
-		logger:        tcLogger,
-		apiKey:        apiKey,
-		baseConfig:    baseConfig,
-		sqlDB:         sqlDB,
-		ownsSQL:       ownsSQL,
-		namespace:     opts.Namespace,
-		sqlitePath:    opts.SQLitePath,
-		assetsDir:     opts.AssetsDir,
-		registerPump:  opts.registerPump,
-		spawnTask:     opts.spawnTask,
-		lmfTools:      opts.lmfTools,
-		loadMixin:     opts.loadMixin,
-		llmtraceStore: opts.llmtraceStore,
-		taskID:        strings.TrimSpace(opts.taskID),
+		ctx:          ctx,
+		logger:       tcLogger,
+		apiKey:       apiKey,
+		baseConfig:   baseConfig,
+		sqlDB:        sqlDB,
+		ownsSQL:      ownsSQL,
+		namespace:    opts.Namespace,
+		sqlitePath:   opts.SQLitePath,
+		assetsDir:    opts.AssetsDir,
+		registerPump: opts.registerPump,
+		spawnTask:    opts.spawnTask,
+		lmfTools:     opts.lmfTools,
+		loadMixin:    opts.loadMixin,
+		taskID:       strings.TrimSpace(opts.taskID),
 	}, nil
 }
 
@@ -217,11 +213,6 @@ func (t *TaskContext) GetAssetsDir() (string, error) {
 		return "", fmt.Errorf("assets dir is not configured for this task context")
 	}
 	return t.assetsDir, nil
-}
-
-// LLMTraceStore returns the llmtrace store, or nil if not configured.
-func (t *TaskContext) LLMTraceStore() *llmtrace.Store {
-	return t.llmtraceStore
 }
 
 func (t *TaskContext) ConversationDB() (*convdb.DB, error) {

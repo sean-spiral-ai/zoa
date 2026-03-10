@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"zoa/conversation"
+	convdb "zoa/conversation/db"
 	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
-	"zoa/internal/llmtrace"
 	modelpkg "zoa/model"
 )
 
@@ -24,14 +25,14 @@ func runTUI(args []string) int {
 	tuiFlags.SetOutput(os.Stderr)
 
 	var (
-		cwd          string
-		sessionDir   string
-		model        string
-		maxTurns     int
-		temperature  float64
-		timeoutSec   int
-		pollMs       int
-		llmtraceAddr string
+		cwd              string
+		sessionDir       string
+		model            string
+		maxTurns         int
+		temperature      float64
+		timeoutSec       int
+		pollMs           int
+		conversationAddr string
 	)
 
 	tuiFlags.StringVar(&cwd, "cwd", defaultCWD, "Workspace root for tools and task context")
@@ -41,7 +42,7 @@ func runTUI(args []string) int {
 	tuiFlags.Float64Var(&temperature, "temperature", modelpkg.DefaultTemperature, "Model temperature")
 	tuiFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	tuiFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
-	tuiFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
+	tuiFlags.StringVar(&conversationAddr, "conversation-addr", ":3009", "Conversation tree HTTP server address (empty to disable)")
 
 	if err := tuiFlags.Parse(args); err != nil {
 		return 2
@@ -78,34 +79,33 @@ func runTUI(args []string) int {
 		)
 	}
 
-	var traceStore *llmtrace.Store
-	if llmtraceAddr != "" {
-		dbPath := filepath.Join(sessionDir, "llmtrace.db")
+	var conversationDB *convdb.DB
+	if conversationAddr != "" {
+		dbPath := filepath.Join(sessionDir, "state.db")
 		var storeErr error
-		traceStore, storeErr = llmtrace.NewStore(dbPath)
+		conversationDB, storeErr = convdb.Open(dbPath)
 		if storeErr != nil {
-			fmt.Fprintf(os.Stderr, "error creating llmtrace store: %v\n", storeErr)
+			fmt.Fprintf(os.Stderr, "error creating conversation db: %v\n", storeErr)
 			return 1
 		}
-		defer traceStore.Close()
-		srv, _, srvErr := llmtrace.StartServer(llmtraceAddr, traceStore)
+		defer conversationDB.Close()
+		srv, _, srvErr := conversation.StartServer(conversationAddr, conversationDB)
 		if srvErr != nil {
-			fmt.Fprintf(os.Stderr, "error starting llmtrace server: %v\n", srvErr)
+			fmt.Fprintf(os.Stderr, "error starting conversation server: %v\n", srvErr)
 			return 1
 		}
 		defer srv.Close()
-		fmt.Fprintf(os.Stderr, "llmtrace server listening on %s\n", llmtraceAddr)
+		fmt.Fprintf(os.Stderr, "conversation server listening on %s\n", conversationAddr)
 	}
 
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:       gatewayclient.DefaultSession,
-		SessionDir:    sessionDir,
-		CWD:           cwd,
-		Model:         model,
-		MaxTurns:      maxTurns,
-		Temperature:   temperature,
-		TimeoutSec:    timeoutSec,
-		LLMTraceStore: traceStore,
+		Session:     gatewayclient.DefaultSession,
+		SessionDir:  sessionDir,
+		CWD:         cwd,
+		Model:       model,
+		MaxTurns:    maxTurns,
+		Temperature: temperature,
+		TimeoutSec:  timeoutSec,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing gateway client: %v\n", err)

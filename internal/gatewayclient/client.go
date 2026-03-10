@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"zoa/internal/llmtrace"
 	diverseideation "zoa/lmflib/diverse_ideation"
 	gatewaylmf "zoa/lmflib/gateway"
 	"zoa/lmflib/intrinsic"
@@ -29,14 +28,13 @@ type GatewayClient interface {
 }
 
 type LocalConfig struct {
-	Session       string
-	SessionDir    string
-	CWD           string
-	Model         string
-	MaxTurns      int
-	Temperature   float64
-	TimeoutSec    int
-	LLMTraceStore *llmtrace.Store
+	Session     string
+	SessionDir  string
+	CWD         string
+	Model       string
+	MaxTurns    int
+	Temperature float64
+	TimeoutSec  int
 }
 
 type EnqueueResult struct {
@@ -119,8 +117,7 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	}
 
 	taskManager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
-		SQLitePath:    filepath.Join(sessionDir, "state.db"),
-		LLMTraceStore: cfg.LLMTraceStore,
+		SQLitePath: filepath.Join(sessionDir, "state.db"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize task manager: %w", err)

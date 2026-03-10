@@ -56,5 +56,5 @@ func printUsage(out *os.File) {
 	fmt.Fprintln(out, "  daemon   Manage the systemd user service")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "LLM Trace:")
-	fmt.Fprintln(out, "  Pass --llmtrace-addr :3009 to tui or slack to enable the LLM conversation tree viewer")
+	fmt.Fprintln(out, "  Pass --conversation-addr :3009 to tui or slack to enable the conversation tree viewer")
 }

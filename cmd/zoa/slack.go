@@ -12,9 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"zoa/conversation"
+	convdb "zoa/conversation/db"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
-	"zoa/internal/llmtrace"
 	slackbridge "zoa/internal/slack"
 	modelpkg "zoa/model"
 )
@@ -26,15 +27,15 @@ func runSlack(args []string) int {
 	slackFlags.SetOutput(os.Stderr)
 
 	var (
-		cwd           string
-		sessionDir    string
-		model         string
-		maxTurns      int
-		temperature   float64
-		timeoutSec    int
-		pollMs        int
-		traceHTTPAddr string
-		llmtraceAddr  string
+		cwd              string
+		sessionDir       string
+		model            string
+		maxTurns         int
+		temperature      float64
+		timeoutSec       int
+		pollMs           int
+		traceHTTPAddr    string
+		conversationAddr string
 
 		appTokenFlag      string
 		botTokenFlag      string
@@ -52,7 +53,7 @@ func runSlack(args []string) int {
 	slackFlags.IntVar(&timeoutSec, "timeout", 3600, "Per-prompt timeout in seconds (0 disables timeout)")
 	slackFlags.IntVar(&pollMs, "poll-ms", 400, "Outbox polling interval in milliseconds")
 	slackFlags.StringVar(&traceHTTPAddr, "trace-http-addr", "127.0.0.1:3008", "runtime trace control HTTP listen address (empty to disable)")
-	slackFlags.StringVar(&llmtraceAddr, "llmtrace-addr", ":3009", "LLM trace tree HTTP server address (empty to disable)")
+	slackFlags.StringVar(&conversationAddr, "conversation-addr", ":3009", "Conversation tree HTTP server address (empty to disable)")
 
 	slackFlags.StringVar(&appTokenFlag, "slack-app-token", "", "Slack app token (xapp-..., default: SLACK_APP_TOKEN)")
 	slackFlags.StringVar(&botTokenFlag, "slack-bot-token", "", "Slack bot token (xoxb-..., default: SLACK_BOT_TOKEN)")
@@ -133,34 +134,33 @@ func runSlack(args []string) int {
 		return 1
 	}
 
-	var traceStore *llmtrace.Store
-	if llmtraceAddr != "" {
-		dbPath := filepath.Join(sessionDir, "llmtrace.db")
+	var conversationDB *convdb.DB
+	if conversationAddr != "" {
+		dbPath := filepath.Join(sessionDir, "state.db")
 		var storeErr error
-		traceStore, storeErr = llmtrace.NewStore(dbPath)
+		conversationDB, storeErr = convdb.Open(dbPath)
 		if storeErr != nil {
-			fmt.Fprintf(os.Stderr, "error creating llmtrace store: %v\n", storeErr)
+			fmt.Fprintf(os.Stderr, "error creating conversation db: %v\n", storeErr)
 			return 1
 		}
-		defer traceStore.Close()
-		srv, _, srvErr := llmtrace.StartServer(llmtraceAddr, traceStore)
+		defer conversationDB.Close()
+		srv, _, srvErr := conversation.StartServer(conversationAddr, conversationDB)
 		if srvErr != nil {
-			fmt.Fprintf(os.Stderr, "error starting llmtrace server: %v\n", srvErr)
+			fmt.Fprintf(os.Stderr, "error starting conversation server: %v\n", srvErr)
 			return 1
 		}
 		defer srv.Close()
-		slog.Info("llmtrace server listening", "addr", llmtraceAddr)
+		slog.Info("conversation server listening", "addr", conversationAddr)
 	}
 
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:       gatewayclient.DefaultSession,
-		SessionDir:    sessionDir,
-		CWD:           cwd,
-		Model:         model,
-		MaxTurns:      maxTurns,
-		Temperature:   temperature,
-		TimeoutSec:    timeoutSec,
-		LLMTraceStore: traceStore,
+		Session:     gatewayclient.DefaultSession,
+		SessionDir:  sessionDir,
+		CWD:         cwd,
+		Model:       model,
+		MaxTurns:    maxTurns,
+		Temperature: temperature,
+		TimeoutSec:  timeoutSec,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing gateway client: %v\n", err)

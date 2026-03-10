@@ -13,7 +13,6 @@ import (
 
 	convdb "zoa/conversation/db"
 	convrunner "zoa/conversation/runner"
-	"zoa/internal/llmtrace"
 	"zoa/internal/tracecontrol"
 	"zoa/llm"
 	"zoa/lmflib"
@@ -899,13 +898,6 @@ func inboundPumpInputFromRecvInput(input map[string]any) (map[string]any, error)
 		out["temperature"] = temperature
 	}
 	return out, nil
-}
-
-func newTracerFromStore(store *llmtrace.Store) llmtrace.MessageTracer {
-	if store == nil {
-		return nil
-	}
-	return llmtrace.NewTracer(store)
 }
 
 func cloneMapAnyLocal(in map[string]any) map[string]any {
