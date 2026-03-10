@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"zoa/llm"
 	"zoa/lmflib"
 	"zoa/runtime"
 )
@@ -39,11 +38,6 @@ type outboxRow struct {
 	SentAt    string
 }
 
-const queryConversationEventsBySession = `SELECT id, created_at, message_json
-		 FROM gateway__conversation_event
-		 WHERE session = ?
-		 ORDER BY id`
-
 func newState(tc *runtime.TaskContext) *state {
 	return &state{tc: tc}
 }
@@ -51,9 +45,6 @@ func newState(tc *runtime.TaskContext) *state {
 func (s *state) init() error {
 	now := time.Now().UTC()
 	if err := s.initSchema(now); err != nil {
-		return err
-	}
-	if err := s.migrateConversationSnapshot(now); err != nil {
 		return err
 	}
 	return nil
@@ -124,59 +115,7 @@ func (s *state) initSchema(_ time.Time) error {
 		return err
 	}
 
-	if _, err := s.tc.SqlExec(`CREATE TABLE IF NOT EXISTS gateway__conversation_event (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session TEXT NOT NULL,
-		message_json TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	)`); err != nil {
-		return err
-	}
-	if _, err := s.tc.SqlExec(`CREATE INDEX IF NOT EXISTS gateway__conversation_event_session_id_idx ON gateway__conversation_event(session, id)`); err != nil {
-		return err
-	}
-
 	return nil
-}
-
-func (s *state) migrateConversationSnapshot(now time.Time) error {
-	countRes, err := s.tc.SqlQuery(`SELECT COUNT(*) AS c FROM gateway__conversation_event`)
-	if err != nil {
-		return err
-	}
-	if len(countRes.Rows) > 0 && int64FromValueDefault(countRes.Rows[0]["c"]) > 0 {
-		return nil
-	}
-
-	hasLegacyTable, err := s.tableExists("gateway__conversation_state")
-	if err != nil {
-		return err
-	}
-	if !hasLegacyTable {
-		return nil
-	}
-
-	legacy, err := s.tc.SqlQuery(`SELECT history_json FROM gateway__conversation_state WHERE id = 1`)
-	if err != nil {
-		return err
-	}
-	if len(legacy.Rows) == 0 {
-		return nil
-	}
-	raw, _ := legacy.Rows[0]["history_json"].(string)
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-
-	var history []llm.Message
-	if err := json.Unmarshal([]byte(raw), &history); err != nil {
-		return fmt.Errorf("decode legacy gateway conversation snapshot: %w", err)
-	}
-	if len(history) == 0 {
-		return nil
-	}
-	return s.appendConversationMessages(defaultGatewaySession, history, now)
 }
 
 func (s *state) tableExists(tableName string) (bool, error) {
@@ -695,71 +634,6 @@ func (s *state) processingCount(session string) (int64, error) {
 		return 0, nil
 	}
 	return int64FromValueDefault(queryRes.Rows[0]["c"]), nil
-}
-
-func (s *state) loadConversationHistory(session string) ([]llm.Message, error) {
-	queryRes, err := s.tc.SqlQuery(queryConversationEventsBySession, session)
-	if err != nil {
-		return nil, err
-	}
-	history := make([]llm.Message, 0, len(queryRes.Rows))
-	for _, item := range queryRes.Rows {
-		raw, _ := item["message_json"].(string)
-		msg, ok, err := decodeConversationMessage(raw)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		history = append(history, msg)
-	}
-	return history, nil
-}
-
-func decodeConversationMessage(raw string) (llm.Message, bool, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return llm.Message{}, false, nil
-	}
-	var msg llm.Message
-	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-		return llm.Message{}, false, fmt.Errorf("decode gateway conversation event: %w", err)
-	}
-	return msg, true, nil
-}
-
-func (s *state) appendConversationMessages(session string, messages []llm.Message, at time.Time) error {
-	if len(messages) == 0 {
-		return nil
-	}
-	return s.tc.SqlTx(func(tx *sql.Tx) error {
-		ctx := context.Background()
-		if s.tc != nil {
-			ctx = s.tc.Context()
-		}
-		createdAt := at.UTC().Format(time.RFC3339Nano)
-		for _, msg := range messages {
-			data, err := json.Marshal(msg)
-			if err != nil {
-				return fmt.Errorf("encode conversation message: %w", err)
-			}
-			if _, err := tx.ExecContext(
-				ctx,
-				`INSERT INTO gateway__conversation_event(session, message_json, created_at) VALUES (?, ?, ?)`,
-				session,
-				string(data),
-				createdAt,
-			); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func (s *state) appendConversationMessage(session string, message llm.Message, at time.Time) error {
-	return s.appendConversationMessages(session, []llm.Message{message}, at)
 }
 
 func int64FromValueDefault(v any) int64 {
