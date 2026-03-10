@@ -30,7 +30,7 @@ func TestGatewaySmokeUsesDiverseIdeationZoaFunction(t *testing.T) {
 	}
 
 	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
-		Session:     "smoke",
+		Session:     gatewayclient.DefaultSession,
 		SessionDir:  sessionDir,
 		CWD:         cwd,
 		Model:       modelName,
