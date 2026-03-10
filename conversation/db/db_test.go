@@ -53,7 +53,7 @@ func TestLeasedRefAppendAndChain(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
+	ref, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
@@ -86,15 +86,25 @@ func TestLeaseRefExpiryAndRenewal(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref1, err := db.LeaseRef("sessions/default", "runner-1", 20*time.Millisecond)
+	if err := db.acquireLease("sessions/default", "runner-1", 20*time.Millisecond); err != nil {
+		t.Fatalf("acquire short lease: %v", err)
+	}
+	snapshot, err := db.GetRef("sessions/default")
 	if err != nil {
-		t.Fatalf("lease ref: %v", err)
+		t.Fatalf("get ref: %v", err)
+	}
+	ref1 := &LeasedRef{
+		db:         db,
+		name:       snapshot.Name,
+		runnerID:   "runner-1",
+		hash:       snapshot.Hash,
+		leaseUntil: snapshot.LeaseUntil,
 	}
 	if err := db.renewLease("sessions/default", "runner-2", time.Minute); !errors.Is(err, ErrLeaseNotHeld) {
 		t.Fatalf("renew wrong holder error = %v, want %v", err, ErrLeaseNotHeld)
 	}
 	time.Sleep(30 * time.Millisecond)
-	ref2, err := db.LeaseRef("sessions/default", "runner-2", time.Minute)
+	ref2, err := db.LeaseRef("sessions/default", "runner-2")
 	if err != nil {
 		t.Fatalf("lease after expiry: %v", err)
 	}
@@ -107,10 +117,10 @@ func TestLeaseRefExpiryAndRenewal(t *testing.T) {
 func TestLeaseRefValidationAndMissingRef(t *testing.T) {
 	db := openTestDB(t)
 
-	if _, err := db.LeaseRef("sessions/default", "   ", time.Minute); err == nil {
+	if _, err := db.LeaseRef("sessions/default", "   "); err == nil {
 		t.Fatal("lease ref with blank runner id unexpectedly succeeded")
 	}
-	if _, err := db.LeaseRef("sessions/missing", "runner-1", time.Minute); !errors.Is(err, ErrRefNotFound) {
+	if _, err := db.LeaseRef("sessions/missing", "runner-1"); !errors.Is(err, ErrRefNotFound) {
 		t.Fatalf("lease missing ref error = %v, want %v", err, ErrRefNotFound)
 	}
 }
@@ -120,7 +130,10 @@ func TestLeaseRefSameHolderRefreshesExpiry(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref, err := db.LeaseRef("sessions/default", "runner-1", 50*time.Millisecond)
+	if err := db.acquireLease("sessions/default", "runner-1", 50*time.Millisecond); err != nil {
+		t.Fatalf("acquire short lease: %v", err)
+	}
+	ref, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
@@ -132,7 +145,7 @@ func TestLeaseRefSameHolderRefreshesExpiry(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 
-	ref2, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
+	ref2, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("reacquire lease ref: %v", err)
 	}
@@ -159,9 +172,19 @@ func TestRenewLeaseMissingRefAndSameHolderAfterExpiry(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref, err := db.LeaseRef("sessions/default", "runner-1", 20*time.Millisecond)
+	if err := db.acquireLease("sessions/default", "runner-1", 20*time.Millisecond); err != nil {
+		t.Fatalf("acquire short lease: %v", err)
+	}
+	snapshot, err := db.GetRef("sessions/default")
 	if err != nil {
-		t.Fatalf("lease ref: %v", err)
+		t.Fatalf("get ref: %v", err)
+	}
+	ref := &LeasedRef{
+		db:         db,
+		name:       snapshot.Name,
+		runnerID:   "runner-1",
+		hash:       snapshot.Hash,
+		leaseUntil: snapshot.LeaseUntil,
 	}
 	defer func() { _ = ref.Close() }()
 	time.Sleep(30 * time.Millisecond)
@@ -169,7 +192,7 @@ func TestRenewLeaseMissingRefAndSameHolderAfterExpiry(t *testing.T) {
 	if err := ref.Renew(); err != nil {
 		t.Fatalf("renew expired lease for same holder: %v", err)
 	}
-	snapshot, err := db.GetRef("sessions/default")
+	snapshot, err = db.GetRef("sessions/default")
 	if err != nil {
 		t.Fatalf("get ref: %v", err)
 	}
@@ -186,7 +209,7 @@ func TestReleaseLeaseClearsHolderAndIgnoresNonHolder(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
+	ref, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
@@ -215,7 +238,7 @@ func TestReleaseLeaseClearsHolderAndIgnoresNonHolder(t *testing.T) {
 	if !snapshot.LeaseUntil.IsZero() {
 		t.Fatalf("lease_until after release = %v, want zero", snapshot.LeaseUntil)
 	}
-	ref2, err := db.LeaseRef("sessions/default", "runner-2", time.Minute)
+	ref2, err := db.LeaseRef("sessions/default", "runner-2")
 	if err != nil {
 		t.Fatalf("lease ref after release: %v", err)
 	}
@@ -227,13 +250,13 @@ func TestLeaseRefRejectsOtherHolder(t *testing.T) {
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
 		t.Fatalf("create ref: %v", err)
 	}
-	ref, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
+	ref, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
 	defer func() { _ = ref.Close() }()
 
-	if _, err := db.LeaseRef("sessions/default", "runner-2", time.Minute); !errors.Is(err, ErrRefLeased) {
+	if _, err := db.LeaseRef("sessions/default", "runner-2"); !errors.Is(err, ErrRefLeased) {
 		t.Fatalf("lease ref error = %v, want %v", err, ErrRefLeased)
 	}
 }
@@ -246,7 +269,7 @@ func TestListRefsReturnsSortedRefsWithLeaseState(t *testing.T) {
 	if err := db.CreateRef("tasks/task-2/main", RootHash); err != nil {
 		t.Fatalf("create task ref: %v", err)
 	}
-	ref, err := db.LeaseRef("tasks/task-2/main", "runner-1", time.Minute)
+	ref, err := db.LeaseRef("tasks/task-2/main", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}

@@ -702,7 +702,7 @@ func (t *TaskContext) ensureSystemPromptOnRef() error {
 		systemPrompt = defaultConversationSystemPrompt
 	}
 	runnerID := fmt.Sprintf("taskctx-system-%d", time.Now().UTC().UnixNano())
-	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
+	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID)
 	if err != nil {
 		return err
 	}
@@ -727,7 +727,7 @@ func (t *TaskContext) appendToMainRef(msg llm.Message) error {
 		return err
 	}
 	runnerID := fmt.Sprintf("taskctx-append-%d", time.Now().UTC().UnixNano())
-	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
+	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID)
 	if err != nil {
 		return err
 	}
@@ -748,7 +748,7 @@ func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.
 	}
 	if cfg.Ref == nil {
 		runnerID := fmt.Sprintf("taskctx-runner-%d", time.Now().UTC().UnixNano())
-		cfg.Ref, err = db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
+		cfg.Ref, err = db.LeaseRef(t.mainConversationRef(), runnerID)
 		if err != nil {
 			return nil, err
 		}

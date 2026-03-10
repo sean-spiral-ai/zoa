@@ -44,11 +44,12 @@ type RefSnapshot struct {
 	LeaseUntil time.Time
 }
 
+const defaultLeaseDuration = 30 * time.Second
+
 type LeasedRef struct {
-	db            *DB
-	name          string
-	runnerID      string
-	leaseDuration time.Duration
+	db       *DB
+	name     string
+	runnerID string
 
 	mu         sync.Mutex
 	hash       string

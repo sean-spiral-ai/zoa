@@ -87,7 +87,7 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 			}, nil
 		},
 	}
-	leasedRef, err := db.LeaseRef("sessions/default", "runner-1", time.Second)
+	leasedRef, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestRunnerReleaseAllowsNewLease(t *testing.T) {
 	if err := r1.Release(); err != nil {
 		t.Fatalf("release runner 1: %v", err)
 	}
-	ref2, err := db.LeaseRef("sessions/default", "runner-2", time.Minute)
+	ref2, err := db.LeaseRef("sessions/default", "runner-2")
 	if err != nil {
 		t.Fatalf("lease ref runner 2: %v", err)
 	}
@@ -256,7 +256,7 @@ func mustCreateRef(t *testing.T, db *convdb.DB, name string) {
 }
 
 func newTestRunner(db *convdb.DB, client llm.Client, toolset []tools.Tool) (*ConversationRunner, error) {
-	leasedRef, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
+	leasedRef, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		return nil, err
 	}

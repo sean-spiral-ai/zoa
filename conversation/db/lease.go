@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-func (db *DB) LeaseRef(name string, runnerID string, duration time.Duration) (*LeasedRef, error) {
+func (db *DB) LeaseRef(name string, runnerID string) (*LeasedRef, error) {
+	duration := defaultLeaseDuration
 	if err := db.acquireLease(name, runnerID, duration); err != nil {
 		return nil, err
 	}
@@ -17,12 +18,11 @@ func (db *DB) LeaseRef(name string, runnerID string, duration time.Duration) (*L
 		return nil, err
 	}
 	return &LeasedRef{
-		db:            db,
-		name:          ref.Name,
-		runnerID:      strings.TrimSpace(runnerID),
-		leaseDuration: duration,
-		hash:          ref.Hash,
-		leaseUntil:    ref.LeaseUntil,
+		db:         db,
+		name:       ref.Name,
+		runnerID:   strings.TrimSpace(runnerID),
+		hash:       ref.Hash,
+		leaseUntil: ref.LeaseUntil,
 	}, nil
 }
 

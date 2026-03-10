@@ -70,10 +70,10 @@ func (r *LeasedRef) Renew() error {
 	if r.released {
 		return ErrLeaseNotHeld
 	}
-	if err := r.db.renewLease(r.name, r.runnerID, r.leaseDuration); err != nil {
+	if err := r.db.renewLease(r.name, r.runnerID, defaultLeaseDuration); err != nil {
 		return err
 	}
-	r.leaseUntil = time.Now().UTC().Add(r.leaseDuration)
+	r.leaseUntil = time.Now().UTC().Add(defaultLeaseDuration)
 	return nil
 }
 

@@ -581,7 +581,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	} else if err != nil {
 		return "", err
 	}
-	leasedRef, err := conversationDB.LeaseRef(refName, fmt.Sprintf("gateway-runner-%d", time.Now().UTC().UnixNano()), time.Minute)
+	leasedRef, err := conversationDB.LeaseRef(refName, fmt.Sprintf("gateway-runner-%d", time.Now().UTC().UnixNano()))
 	if err != nil {
 		return "", err
 	}
