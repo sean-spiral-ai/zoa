@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	modelpkg "zoa/model"
+	modelpkg "zoa/internal/agentloop/model"
 	"zoa/runtime"
 )
 

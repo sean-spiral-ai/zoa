@@ -11,10 +11,10 @@ import (
 	"time"
 
 	convdb "zoa/conversation/db"
+	"zoa/internal/agentloop/llm"
+	"zoa/internal/agentloop/model"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
-	"zoa/llm"
-	"zoa/model"
 )
 
 func TestGatewaySmokeUsesDiverseIdeationZoaFunction(t *testing.T) {

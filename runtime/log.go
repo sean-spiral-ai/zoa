@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 )
 
 type TaskLogSummary struct {

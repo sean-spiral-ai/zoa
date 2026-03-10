@@ -9,7 +9,7 @@ import (
 	diverseideation "zoa/hub/util/diverse_ideation"
 	gatewaylmf "zoa/hub/util/gateway"
 	mdtopdf "zoa/hub/util/md_to_pdf"
-	modelpkg "zoa/model"
+	modelpkg "zoa/internal/agentloop/model"
 	"zoa/runtime"
 )
 

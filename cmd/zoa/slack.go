@@ -17,7 +17,7 @@ import (
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
 	slackbridge "zoa/internal/slack"
-	modelpkg "zoa/model"
+	modelpkg "zoa/internal/agentloop/model"
 )
 
 func runSlack(args []string) int {

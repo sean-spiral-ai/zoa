@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 	gatewaylmf "zoa/hub/util/gateway"
 
 	_ "modernc.org/sqlite"

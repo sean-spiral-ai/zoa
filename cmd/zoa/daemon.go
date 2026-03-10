@@ -8,7 +8,7 @@ import (
 
 	"zoa/internal/daemon"
 	"zoa/internal/gatewayclient"
-	modelpkg "zoa/model"
+	modelpkg "zoa/internal/agentloop/model"
 )
 
 func runDaemon(args []string) int {

@@ -14,8 +14,8 @@ import (
 
 	convdb "zoa/conversation/db"
 	"zoa/internal/semtrace"
-	"zoa/llm"
-	tools "zoa/tools"
+	"zoa/internal/agentloop/llm"
+	tools "zoa/internal/agentloop/tools"
 )
 
 type TaskStatus string

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	convdb "zoa/conversation/db"
-	"zoa/llm"
-	tools "zoa/tools"
+	"zoa/internal/agentloop/llm"
+	tools "zoa/internal/agentloop/tools"
 )
 
 var ErrRunInProgress = errors.New("a run is already in progress")

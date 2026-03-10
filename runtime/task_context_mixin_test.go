@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 )
 
 func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {

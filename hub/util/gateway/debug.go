@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 )
 
 type DebugConversationEvent struct {

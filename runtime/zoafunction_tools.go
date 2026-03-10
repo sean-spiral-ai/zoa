@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"zoa/llm"
-	tools "zoa/tools"
+	"zoa/internal/agentloop/llm"
+	tools "zoa/internal/agentloop/tools"
 )
 
 func newZoaFunctionTools(registry *Registry, manager *TaskManager) ([]tools.Tool, error) {

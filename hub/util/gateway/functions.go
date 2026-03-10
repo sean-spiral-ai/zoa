@@ -14,12 +14,12 @@ import (
 	convdb "zoa/conversation/db"
 	convrunner "zoa/conversation/runner"
 	"zoa/hub"
+	"zoa/internal/agentloop/llm"
+	modelpkg "zoa/internal/agentloop/model"
+	tools "zoa/internal/agentloop/tools"
 	"zoa/internal/tracecontrol"
-	"zoa/llm"
-	modelpkg "zoa/model"
 	"zoa/reliable"
 	"zoa/runtime"
-	tools "zoa/tools"
 )
 
 const (

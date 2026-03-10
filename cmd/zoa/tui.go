@@ -15,7 +15,7 @@ import (
 	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
-	modelpkg "zoa/model"
+	modelpkg "zoa/internal/agentloop/model"
 )
 
 func runTUI(args []string) int {

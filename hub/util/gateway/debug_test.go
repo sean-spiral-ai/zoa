@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	convdb "zoa/conversation/db"
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 
 	_ "modernc.org/sqlite"
 )

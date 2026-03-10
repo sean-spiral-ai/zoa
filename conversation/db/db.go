@@ -9,7 +9,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 )
 
 type DB struct {

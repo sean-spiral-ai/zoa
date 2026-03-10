@@ -1,6 +1,6 @@
 package runtime
 
-import "zoa/llm"
+import "zoa/internal/agentloop/llm"
 
 type ExecFunc func(tc *TaskContext, input map[string]any) (map[string]any, error)
 

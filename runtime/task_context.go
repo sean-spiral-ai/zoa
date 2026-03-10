@@ -14,9 +14,9 @@ import (
 
 	convdb "zoa/conversation/db"
 	convrunner "zoa/conversation/runner"
-	"zoa/llm"
-	modelpkg "zoa/model"
-	tools "zoa/tools"
+	"zoa/internal/agentloop/llm"
+	modelpkg "zoa/internal/agentloop/model"
+	tools "zoa/internal/agentloop/tools"
 )
 
 const defaultConversationSystemPrompt = `You are a reliable assistant.

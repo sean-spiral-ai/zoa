@@ -8,7 +8,7 @@ import (
 	"time"
 
 	convdb "zoa/conversation/db"
-	"zoa/llm"
+	"zoa/internal/agentloop/llm"
 )
 
 func TestStartServerServesTraceEndpoints(t *testing.T) {
