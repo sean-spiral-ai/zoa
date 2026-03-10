@@ -48,6 +48,7 @@ function renderChain(node) {
 
 function renderBaseline(node) {
   var role = node.role || 'unknown';
+  var shortHash = (node.hash || '').slice(0, 8);
   var time = node.created_at ? new Date(node.created_at).toLocaleTimeString() : '';
   var preview = buildPreview(node);
   var nid = 'n-' + node.hash.slice(0, 12);
@@ -60,6 +61,7 @@ function renderBaseline(node) {
     html += '<span class="min-icon">\u00a0</span>';
   }
   html += '<span class="expand-icon" id="icon-' + nid + '" onclick="toggleExpanded(\'' + nid + '\')">+</span>';
+  html += '<span class="role-hash">' + esc(shortHash) + '</span>';
   html += '<span class="role role-' + role + '">' + esc(role) + '</span>';
   html += '<span class="preview" onclick="toggleExpanded(\'' + nid + '\')">' + esc(preview) + '</span>';
   html += '<span class="time">' + time + '</span>';

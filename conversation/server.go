@@ -66,6 +66,7 @@ var webUI = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>C
 	".baseline { cursor: pointer; padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 8px; }\n" +
 	".baseline:hover { background: #161b22; }\n" +
 	".role { font-size: 0.75em; padding: 2px 6px; border-radius: 3px; font-weight: 600; text-transform: uppercase; flex-shrink: 0; }\n" +
+	".role-hash { font-size: 0.72em; color: #6e7681; letter-spacing: 0.04em; flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }\n" +
 	".role-system { background: #1f2937; color: #9ca3af; }\n" +
 	".role-user { background: #0c2d48; color: #58a6ff; }\n" +
 	".role-assistant { background: #1a2e1a; color: #3fb950; }\n" +
