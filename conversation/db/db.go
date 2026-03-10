@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -36,11 +37,23 @@ type TraceNode struct {
 
 type Message = llm.Message
 
-type Ref struct {
+type RefSnapshot struct {
 	Name       string
 	Hash       string
 	LeasedBy   string
 	LeaseUntil time.Time
+}
+
+type LeasedRef struct {
+	db            *DB
+	name          string
+	runnerID      string
+	leaseDuration time.Duration
+
+	mu         sync.Mutex
+	hash       string
+	leaseUntil time.Time
+	released   bool
 }
 
 func Open(dbPath string) (*DB, error) {

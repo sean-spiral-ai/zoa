@@ -581,9 +581,12 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	} else if err != nil {
 		return "", err
 	}
+	leasedRef, err := conversationDB.LeaseRef(refName, fmt.Sprintf("gateway-runner-%d", time.Now().UTC().UnixNano()), time.Minute)
+	if err != nil {
+		return "", err
+	}
 	r, err := convrunner.NewRunner(convrunner.RunnerConfig{
-		DB:           conversationDB,
-		Ref:          refName,
+		Ref:          leasedRef,
 		Client:       client,
 		Model:        model,
 		Tools:        codingTools,
@@ -592,9 +595,10 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 		MaxTurns:     maxTurns,
 	})
 	if err != nil {
+		_ = leasedRef.Close()
 		return "", err
 	}
-	if err := r.Run(promptCtx, message); err != nil {
+	if err := r.Run(promptCtx, message, convrunner.RunOptions{}); err != nil {
 		return "", err
 	}
 	res := r.Wait()

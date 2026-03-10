@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-func (db *DB) GetRef(name string) (Ref, error) {
+func (db *DB) GetRef(name string) (RefSnapshot, error) {
 	var (
-		ref            Ref
+		ref            RefSnapshot
 		leaseUntilText string
 	)
 	err := db.sql.QueryRow(
@@ -17,16 +17,16 @@ func (db *DB) GetRef(name string) (Ref, error) {
 		strings.TrimSpace(name),
 	).Scan(&ref.Name, &ref.Hash, &ref.LeasedBy, &leaseUntilText)
 	if err == sql.ErrNoRows {
-		return Ref{}, ErrRefNotFound
+		return RefSnapshot{}, ErrRefNotFound
 	}
 	if err != nil {
-		return Ref{}, fmt.Errorf("get ref: %w", err)
+		return RefSnapshot{}, fmt.Errorf("get ref: %w", err)
 	}
 	ref.LeaseUntil = parseLeaseUntil(leaseUntilText)
 	return ref, nil
 }
 
-func (db *DB) ListRefs() ([]Ref, error) {
+func (db *DB) ListRefs() ([]RefSnapshot, error) {
 	rows, err := db.sql.Query(
 		`SELECT name, hash, leased_by, lease_until
 		 FROM conversation_ref
@@ -37,10 +37,10 @@ func (db *DB) ListRefs() ([]Ref, error) {
 	}
 	defer rows.Close()
 
-	refs := make([]Ref, 0)
+	refs := make([]RefSnapshot, 0)
 	for rows.Next() {
 		var (
-			ref            Ref
+			ref            RefSnapshot
 			leaseUntilText string
 		)
 		if err := rows.Scan(&ref.Name, &ref.Hash, &ref.LeasedBy, &leaseUntilText); err != nil {
@@ -77,32 +77,7 @@ func (db *DB) CreateRef(name string, hash string) error {
 	return nil
 }
 
-func (db *DB) SetRef(name string, hash string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("ref name is required")
-	}
-	if hash == "" {
-		hash = RootHash
-	}
-	if err := db.ensureNodeExists(hash); err != nil {
-		return err
-	}
-	res, err := db.sql.Exec(
-		`UPDATE conversation_ref SET hash = ?, updated_at = ? WHERE name = ?`,
-		hash, time.Now().UTC().Format(time.RFC3339Nano), name,
-	)
-	if err != nil {
-		return fmt.Errorf("set ref: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err == nil && affected == 0 {
-		return ErrRefNotFound
-	}
-	return nil
-}
-
-func (db *DB) AdvanceRef(name string, expectHash string, msg Message, leaseHolder string) (string, error) {
+func (db *DB) advanceRef(name string, expectHash string, msg Message, runnerID string) (string, error) {
 	tx, err := db.sql.Begin()
 	if err != nil {
 		return "", fmt.Errorf("begin advance ref: %w", err)
@@ -118,7 +93,7 @@ func (db *DB) AdvanceRef(name string, expectHash string, msg Message, leaseHolde
 	if ref.Hash != expectHash {
 		return "", ErrRefMoved
 	}
-	if ref.LeasedBy != "" && ref.LeasedBy != leaseHolder && !leaseExpired {
+	if ref.LeasedBy != "" && ref.LeasedBy != runnerID && !leaseExpired {
 		return "", ErrRefLeased
 	}
 	newHash, err := db.insertNode(tx, expectHash, msg)

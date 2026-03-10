@@ -32,40 +32,32 @@ type RunResult struct {
 }
 
 type RunnerConfig struct {
-	DB               *convdb.DB
-	Ref              string
-	Client           llm.Client
-	Model            string
-	Tools            []tools.Tool
-	Temperature      float64
-	SystemPrompt     string
-	LeaseHolder      string
-	LeaseDuration    time.Duration
-	GracePeriod      time.Duration
-	MaxTurns         int
+	Ref          *convdb.LeasedRef
+	Client       llm.Client
+	Model        string
+	Tools        []tools.Tool
+	Temperature  float64
+	SystemPrompt string
+	GracePeriod  time.Duration
+	MaxTurns     int
+}
+
+type RunOptions struct {
 	ResponseMimeType string
 	ResponseSchema   map[string]any
-	DisableTools     bool
 }
 
 type ConversationRunner struct {
-	db               *convdb.DB
-	ref              string
-	client           llm.Client
-	model            string
-	registry         *tools.Registry
-	temperature      float64
-	systemPrompt     string
-	leaseHolder      string
-	leaseDuration    time.Duration
-	gracePeriod      time.Duration
-	maxTurns         int
-	responseMimeType string
-	responseSchema   map[string]any
-	disableTools     bool
+	ref          *convdb.LeasedRef
+	client       llm.Client
+	model        string
+	registry     *tools.Registry
+	temperature  float64
+	systemPrompt string
+	gracePeriod  time.Duration
+	maxTurns     int
 
 	mu               sync.Mutex
-	head             string
 	runCancel        context.CancelFunc
 	activeToolCancel context.CancelFunc
 	running          bool
@@ -77,17 +69,11 @@ type ConversationRunner struct {
 }
 
 func NewRunner(cfg RunnerConfig) (*ConversationRunner, error) {
-	if cfg.DB == nil {
-		return nil, fmt.Errorf("db is required")
-	}
-	if strings.TrimSpace(cfg.Ref) == "" {
+	if cfg.Ref == nil {
 		return nil, fmt.Errorf("ref is required")
 	}
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("client is required")
-	}
-	if cfg.LeaseDuration <= 0 {
-		cfg.LeaseDuration = time.Minute
 	}
 	if cfg.GracePeriod <= 0 {
 		cfg.GracePeriod = 1500 * time.Millisecond
@@ -95,37 +81,19 @@ func NewRunner(cfg RunnerConfig) (*ConversationRunner, error) {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 20
 	}
-	if strings.TrimSpace(cfg.LeaseHolder) == "" {
-		cfg.LeaseHolder = fmt.Sprintf("runner-%d", time.Now().UTC().UnixNano())
-	}
-	if err := cfg.DB.AcquireLease(cfg.Ref, cfg.LeaseHolder, cfg.LeaseDuration); err != nil {
-		return nil, err
-	}
-	ref, err := cfg.DB.GetRef(cfg.Ref)
-	if err != nil {
-		_ = cfg.DB.ReleaseLease(cfg.Ref, cfg.LeaseHolder)
-		return nil, err
-	}
 	return &ConversationRunner{
-		db:               cfg.DB,
-		ref:              cfg.Ref,
-		client:           cfg.Client,
-		model:            cfg.Model,
-		registry:         tools.NewRegistry(cfg.Tools),
-		temperature:      cfg.Temperature,
-		systemPrompt:     strings.TrimSpace(cfg.SystemPrompt),
-		leaseHolder:      cfg.LeaseHolder,
-		leaseDuration:    cfg.LeaseDuration,
-		gracePeriod:      cfg.GracePeriod,
-		maxTurns:         cfg.MaxTurns,
-		responseMimeType: strings.TrimSpace(cfg.ResponseMimeType),
-		responseSchema:   cloneMap(cfg.ResponseSchema),
-		disableTools:     cfg.DisableTools,
-		head:             ref.Hash,
+		ref:          cfg.Ref,
+		client:       cfg.Client,
+		model:        cfg.Model,
+		registry:     tools.NewRegistry(cfg.Tools),
+		temperature:  cfg.Temperature,
+		systemPrompt: strings.TrimSpace(cfg.SystemPrompt),
+		gracePeriod:  cfg.GracePeriod,
+		maxTurns:     cfg.MaxTurns,
 	}, nil
 }
 
-func (r *ConversationRunner) Run(ctx context.Context, userMessage string) error {
+func (r *ConversationRunner) Run(ctx context.Context, userMessage string, opts RunOptions) error {
 	if strings.TrimSpace(userMessage) == "" {
 		return fmt.Errorf("user message is required")
 	}
@@ -148,19 +116,19 @@ func (r *ConversationRunner) Run(ctx context.Context, userMessage string) error 
 		return nil
 	}
 
-	newHead, err := r.db.AdvanceRef(r.ref, r.HeadHash(), convdb.Message{
+	newHead, err := r.ref.Append(convdb.Message{
 		Role: llm.RoleUser,
 		Text: strings.TrimSpace(userMessage),
-	}, r.leaseHolder)
+	})
 	if err != nil {
 		r.finish(RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Err: err})
 		return nil
 	}
-	r.setHead(newHead)
+	_ = newHead
 
 	go r.renewLeaseLoop()
 	go func() {
-		result := r.runLoop(runCtx)
+		result := r.runLoop(runCtx, opts)
 		r.finish(result)
 	}()
 	return nil
@@ -189,7 +157,7 @@ func (r *ConversationRunner) Stop() {
 	grace := r.gracePeriod
 	r.mu.Unlock()
 	if done == nil {
-		_ = r.db.ReleaseLease(r.ref, r.leaseHolder)
+		_ = r.ref.Close()
 		return
 	}
 
@@ -208,7 +176,7 @@ func (r *ConversationRunner) Stop() {
 		}
 		<-done
 	}
-	_ = r.db.ReleaseLease(r.ref, r.leaseHolder)
+	_ = r.ref.Close()
 }
 
 func (r *ConversationRunner) Release() error {
@@ -218,58 +186,48 @@ func (r *ConversationRunner) Release() error {
 	if running {
 		return ErrRunInProgress
 	}
-	return r.db.ReleaseLease(r.ref, r.leaseHolder)
+	return r.ref.Close()
 }
 
 func (r *ConversationRunner) HeadHash() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.head
+	return r.ref.Hash()
 }
 
 func (r *ConversationRunner) Ref() string {
-	return r.ref
+	return r.ref.Name()
 }
 
 func (r *ConversationRunner) ensureSystemPrompt() error {
 	if r.systemPrompt == "" {
 		return nil
 	}
-	if len(mustLoadChain(r.db, r.HeadHash())) > 0 {
+	if len(mustLoadChain(r.ref)) > 0 {
 		return nil
 	}
-	newHead, err := r.db.AdvanceRef(r.ref, r.HeadHash(), convdb.Message{
+	_, err := r.ref.Append(convdb.Message{
 		Role: llm.RoleSystem,
 		Text: r.systemPrompt,
-	}, r.leaseHolder)
-	if err != nil {
-		return err
-	}
-	r.setHead(newHead)
-	return nil
+	})
+	return err
 }
 
-func (r *ConversationRunner) runLoop(ctx context.Context) RunResult {
+func (r *ConversationRunner) runLoop(ctx context.Context, opts RunOptions) RunResult {
 	for turn := 1; turn <= r.maxTurns; turn++ {
 		if r.interrupted() {
 			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn - 1}
 		}
-		chain, err := r.db.LoadChain(r.HeadHash())
+		chain, err := r.ref.LoadChain()
 		if err != nil {
 			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn - 1, Err: err}
 		}
 
-		toolSpecs := r.registry.Specs()
-		if r.disableTools {
-			toolSpecs = nil
-		}
 		resp, err := r.client.Complete(ctx, llm.CompletionRequest{
 			Model:            r.model,
 			Messages:         chainMessages(chain),
-			Tools:            toolSpecs,
+			Tools:            r.registry.Specs(),
 			Temperature:      r.temperature,
-			ResponseMimeType: r.responseMimeType,
-			ResponseSchema:   cloneMap(r.responseSchema),
+			ResponseMimeType: strings.TrimSpace(opts.ResponseMimeType),
+			ResponseSchema:   cloneMap(opts.ResponseSchema),
 		})
 		if err != nil {
 			if r.interrupted() || errors.Is(ctx.Err(), context.Canceled) {
@@ -284,11 +242,9 @@ func (r *ConversationRunner) runLoop(ctx context.Context) RunResult {
 			Parts:     cloneAssistantParts(resp.Parts),
 			ToolCalls: cloneToolCalls(resp.ToolCalls),
 		}
-		newHead, err := r.db.AdvanceRef(r.ref, r.HeadHash(), assistantMsg, r.leaseHolder)
-		if err != nil {
+		if _, err := r.ref.Append(assistantMsg); err != nil {
 			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn - 1, Err: err}
 		}
-		r.setHead(newHead)
 
 		if r.interrupted() {
 			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn}
@@ -329,14 +285,12 @@ func (r *ConversationRunner) runLoop(ctx context.Context) RunResult {
 			}
 		}
 
-		newHead, err = r.db.AdvanceRef(r.ref, r.HeadHash(), convdb.Message{
+		if _, err := r.ref.Append(convdb.Message{
 			Role:        llm.RoleTool,
 			ToolResults: results,
-		}, r.leaseHolder)
-		if err != nil {
+		}); err != nil {
 			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn, Err: err}
 		}
-		r.setHead(newHead)
 		if r.interrupted() {
 			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn}
 		}
@@ -370,14 +324,14 @@ func (r *ConversationRunner) finish(result RunResult) {
 	if leaseStop != nil {
 		close(leaseStop)
 	}
-	_ = r.db.ReleaseLease(r.ref, r.leaseHolder)
+	_ = r.ref.Close()
 	if done != nil {
 		close(done)
 	}
 }
 
 func (r *ConversationRunner) renewLeaseLoop() {
-	interval := r.leaseDuration / 2
+	interval := time.Until(r.ref.LeaseDeadline()) / 2
 	if interval <= 0 {
 		interval = time.Second
 	}
@@ -388,15 +342,14 @@ func (r *ConversationRunner) renewLeaseLoop() {
 		case <-r.leaseStop:
 			return
 		case <-ticker.C:
-			_ = r.db.RenewLease(r.ref, r.leaseHolder, r.leaseDuration)
+			_ = r.ref.Renew()
+			nextInterval := time.Until(r.ref.LeaseDeadline()) / 2
+			if nextInterval <= 0 {
+				nextInterval = time.Second
+			}
+			ticker.Reset(nextInterval)
 		}
 	}
-}
-
-func (r *ConversationRunner) setHead(hash string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.head = hash
 }
 
 func (r *ConversationRunner) setActiveToolCancel(cancel context.CancelFunc) {
@@ -484,8 +437,8 @@ func cloneAny(v any) any {
 	}
 }
 
-func mustLoadChain(db *convdb.DB, head string) []convdb.Node {
-	chain, err := db.LoadChain(head)
+func mustLoadChain(ref *convdb.LeasedRef) []convdb.Node {
+	chain, err := ref.LoadChain()
 	if err != nil {
 		return nil
 	}

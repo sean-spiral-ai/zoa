@@ -26,18 +26,11 @@ func TestRunnerCompletesWithoutTools(t *testing.T) {
 		},
 	}
 
-	r, err := NewRunner(RunnerConfig{
-		DB:           db,
-		Ref:          "sessions/default",
-		Client:       client,
-		Model:        "test-model",
-		SystemPrompt: "sys",
-		LeaseHolder:  "runner-1",
-	})
+	r, err := newTestRunner(db, client, nil)
 	if err != nil {
 		t.Fatalf("new runner: %v", err)
 	}
-	if err := r.Run(context.Background(), "hello"); err != nil {
+	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	result := r.Wait()
@@ -68,19 +61,11 @@ func TestRunnerCompletesToolLoop(t *testing.T) {
 		}
 	}
 
-	r, err := NewRunner(RunnerConfig{
-		DB:           db,
-		Ref:          "sessions/default",
-		Client:       client,
-		Model:        "test-model",
-		SystemPrompt: "sys",
-		Tools:        []tools.Tool{echoTool{}},
-		LeaseHolder:  "runner-1",
-	})
+	r, err := newTestRunner(db, client, []tools.Tool{echoTool{}})
 	if err != nil {
 		t.Fatalf("new runner: %v", err)
 	}
-	if err := r.Run(context.Background(), "hello"); err != nil {
+	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	result := r.Wait()
@@ -102,9 +87,12 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 			}, nil
 		},
 	}
+	leasedRef, err := db.LeaseRef("sessions/default", "runner-1", time.Second)
+	if err != nil {
+		t.Fatalf("lease ref: %v", err)
+	}
 	r, err := NewRunner(RunnerConfig{
-		DB:           db,
-		Ref:          "sessions/default",
+		Ref:          leasedRef,
 		Client:       client,
 		Model:        "test-model",
 		SystemPrompt: "sys",
@@ -112,14 +100,12 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 			started: toolStarted,
 			release: toolRelease,
 		}},
-		LeaseHolder:   "runner-1",
-		GracePeriod:   10 * time.Millisecond,
-		LeaseDuration: time.Second,
+		GracePeriod: 10 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("new runner: %v", err)
 	}
-	if err := r.Run(context.Background(), "hello"); err != nil {
+	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	<-toolStarted
@@ -150,55 +136,62 @@ func TestRunnerRejectsConcurrentRun(t *testing.T) {
 			return llm.CompletionResponse{Text: "done"}, nil
 		},
 	}
-	r, err := NewRunner(RunnerConfig{DB: db, Ref: "sessions/default", Client: client, Model: "test-model", LeaseHolder: "runner-1"})
+	r, err := newTestRunner(db, client, nil)
 	if err != nil {
 		t.Fatalf("new runner: %v", err)
 	}
-	if err := r.Run(context.Background(), "hello"); err != nil {
+	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if err := r.Run(context.Background(), "again"); !errors.Is(err, ErrRunInProgress) {
+	if err := r.Run(context.Background(), "again", RunOptions{}); !errors.Is(err, ErrRunInProgress) {
 		t.Fatalf("second run error = %v, want %v", err, ErrRunInProgress)
 	}
 	close(wait)
 	_ = r.Wait()
 }
 
-func TestRunnerFailsIfRefMoved(t *testing.T) {
-	db := openRunnerDB(t)
-	mustCreateRef(t, db, "sessions/default")
-	client := &stubClient{
-		complete: func(_ context.Context, req llm.CompletionRequest) (llm.CompletionResponse, error) {
-			mustAppendExternal(t, db, "sessions/default")
-			return llm.CompletionResponse{Text: "done"}, nil
-		},
-	}
-	r, err := NewRunner(RunnerConfig{DB: db, Ref: "sessions/default", Client: client, Model: "test-model", LeaseHolder: "runner-1"})
-	if err != nil {
-		t.Fatalf("new runner: %v", err)
-	}
-	if err := r.Run(context.Background(), "hello"); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	result := r.Wait()
-	if !errors.Is(result.Err, convdb.ErrRefMoved) {
-		t.Fatalf("result error = %v, want %v", result.Err, convdb.ErrRefMoved)
-	}
-}
-
 func TestRunnerReleaseAllowsNewLease(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
-	r1, err := NewRunner(RunnerConfig{DB: db, Ref: "sessions/default", Client: &stubClient{}, Model: "test-model", LeaseHolder: "runner-1"})
+	r1, err := newTestRunner(db, &stubClient{}, nil)
 	if err != nil {
 		t.Fatalf("new runner 1: %v", err)
 	}
 	if err := r1.Release(); err != nil {
 		t.Fatalf("release runner 1: %v", err)
 	}
-	if _, err := NewRunner(RunnerConfig{DB: db, Ref: "sessions/default", Client: &stubClient{}, Model: "test-model", LeaseHolder: "runner-2"}); err != nil {
-		t.Fatalf("new runner 2: %v", err)
+	ref2, err := db.LeaseRef("sessions/default", "runner-2", time.Minute)
+	if err != nil {
+		t.Fatalf("lease ref runner 2: %v", err)
 	}
+	defer func() { _ = ref2.Close() }()
+}
+
+func TestRunnerRunOptionsFlowToClient(t *testing.T) {
+	db := openRunnerDB(t)
+	mustCreateRef(t, db, "sessions/default")
+	client := &stubClient{
+		complete: func(_ context.Context, req llm.CompletionRequest) (llm.CompletionResponse, error) {
+			if req.ResponseMimeType != "application/json" {
+				t.Fatalf("response mime type = %q", req.ResponseMimeType)
+			}
+			if req.ResponseSchema == nil {
+				t.Fatal("expected response schema")
+			}
+			return llm.CompletionResponse{Text: `{"ok":true}`}, nil
+		},
+	}
+	r, err := newTestRunner(db, client, []tools.Tool{})
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+	if err := r.Run(context.Background(), "hello", RunOptions{
+		ResponseMimeType: "application/json",
+		ResponseSchema:   map[string]any{"type": "object"},
+	}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	_ = r.Wait()
 }
 
 type stubClient struct {
@@ -262,17 +255,16 @@ func mustCreateRef(t *testing.T, db *convdb.DB, name string) {
 	}
 }
 
-func mustAppendExternal(t *testing.T, db *convdb.DB, name string) {
-	t.Helper()
-	headRef, err := db.GetRef(name)
+func newTestRunner(db *convdb.DB, client llm.Client, toolset []tools.Tool) (*ConversationRunner, error) {
+	leasedRef, err := db.LeaseRef("sessions/default", "runner-1", time.Minute)
 	if err != nil {
-		t.Fatalf("get ref: %v", err)
+		return nil, err
 	}
-	hash, err := db.Append(headRef.Hash, convdb.Message{Role: llm.RoleUser, Text: "external"})
-	if err != nil {
-		t.Fatalf("append external: %v", err)
-	}
-	if err := db.SetRef(name, hash); err != nil {
-		t.Fatalf("set ref external: %v", err)
-	}
+	return NewRunner(RunnerConfig{
+		Ref:          leasedRef,
+		Client:       client,
+		Model:        "test-model",
+		SystemPrompt: "sys",
+		Tools:        toolset,
+	})
 }

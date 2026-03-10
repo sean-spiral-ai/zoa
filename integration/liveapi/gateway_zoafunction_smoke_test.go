@@ -90,7 +90,7 @@ Do not include any intro or outro text.
 		t.Fatalf("session ref still points at root")
 	}
 
-	var matchingTaskRefs []convdb.Ref
+	var matchingTaskRefs []convdb.RefSnapshot
 	for _, ref := range refs {
 		if !strings.HasPrefix(ref.Name, "tasks/") || !strings.HasSuffix(ref.Name, "/main") {
 			continue

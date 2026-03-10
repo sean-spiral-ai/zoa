@@ -44,15 +44,15 @@ type TaskContextOptions struct {
 	Namespace              string
 	AssetsDir              string
 
-	logger         *slog.Logger
-	sqlDB          sqlExecutor
-	runtimeSQLDB   sqlExecutor
-	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	logger           *slog.Logger
+	sqlDB            sqlExecutor
+	runtimeSQLDB     sqlExecutor
+	registerPump     func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask        func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
 	zoaFunctionTools func() ([]tools.Tool, error)
-	loadMixin      func(id string) (*Mixin, bool)
-	conversationDB *convdb.DB
-	taskID         string
+	loadMixin        func(id string) (*Mixin, bool)
+	conversationDB   *convdb.DB
+	taskID           string
 }
 
 type TaskContext struct {
@@ -532,7 +532,7 @@ func (t *TaskContext) NLExec(prompt string, data map[string]any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if err := r.Run(t.ctx, instruction); err != nil {
+	if err := r.Run(t.ctx, instruction, convrunner.RunOptions{}); err != nil {
 		return "", err
 	}
 	res := r.Wait()
@@ -556,15 +556,14 @@ func (t *TaskContext) NLExecTyped(prompt string, data map[string]any, out any) e
 	if err != nil {
 		return err
 	}
-	r, err := t.newMainRunner(convrunner.RunnerConfig{
-		ResponseMimeType: llm.JSONSchemaFormat{SchemaObject: schema}.MimeType(),
-		ResponseSchema:   schema,
-		DisableTools:     true,
-	})
+	r, err := t.newMainRunner(convrunner.RunnerConfig{Tools: []tools.Tool{}})
 	if err != nil {
 		return err
 	}
-	if err := r.Run(t.ctx, instruction); err != nil {
+	if err := r.Run(t.ctx, instruction, convrunner.RunOptions{
+		ResponseMimeType: llm.JSONSchemaFormat{SchemaObject: schema}.MimeType(),
+		ResponseSchema:   schema,
+	}); err != nil {
 		return err
 	}
 	res := r.Wait()
@@ -702,26 +701,23 @@ func (t *TaskContext) ensureSystemPromptOnRef() error {
 	if systemPrompt == "" {
 		systemPrompt = defaultConversationSystemPrompt
 	}
-	holder := fmt.Sprintf("taskctx-system-%d", time.Now().UTC().UnixNano())
-	if err := db.AcquireLease(t.mainConversationRef(), holder, 30*time.Second); err != nil {
-		return err
-	}
-	defer func() { _ = db.ReleaseLease(t.mainConversationRef(), holder) }()
-	ref, err = db.GetRef(t.mainConversationRef())
+	runnerID := fmt.Sprintf("taskctx-system-%d", time.Now().UTC().UnixNano())
+	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
 	if err != nil {
 		return err
 	}
-	chain, err = db.LoadChain(ref.Hash)
+	defer func() { _ = leasedRef.Close() }()
+	chain, err = leasedRef.LoadChain()
 	if err != nil {
 		return err
 	}
 	if len(chain) > 0 {
 		return nil
 	}
-	_, err = db.AdvanceRef(t.mainConversationRef(), ref.Hash, convdb.Message{
+	_, err = leasedRef.Append(convdb.Message{
 		Role: llm.RoleSystem,
 		Text: systemPrompt,
-	}, holder)
+	})
 	return err
 }
 
@@ -730,16 +726,13 @@ func (t *TaskContext) appendToMainRef(msg llm.Message) error {
 	if err != nil {
 		return err
 	}
-	holder := fmt.Sprintf("taskctx-append-%d", time.Now().UTC().UnixNano())
-	if err := db.AcquireLease(t.mainConversationRef(), holder, 30*time.Second); err != nil {
-		return err
-	}
-	defer func() { _ = db.ReleaseLease(t.mainConversationRef(), holder) }()
-	ref, err := db.GetRef(t.mainConversationRef())
+	runnerID := fmt.Sprintf("taskctx-append-%d", time.Now().UTC().UnixNano())
+	leasedRef, err := db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
 	if err != nil {
 		return err
 	}
-	_, err = db.AdvanceRef(t.mainConversationRef(), ref.Hash, convdb.Message(msg), holder)
+	defer func() { _ = leasedRef.Close() }()
+	_, err = leasedRef.Append(convdb.Message(msg))
 	return err
 }
 
@@ -753,10 +746,16 @@ func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.
 	if err != nil {
 		return nil, err
 	}
-	cfg.DB = db
-	cfg.Ref = t.mainConversationRef()
+	if cfg.Ref == nil {
+		runnerID := fmt.Sprintf("taskctx-runner-%d", time.Now().UTC().UnixNano())
+		cfg.Ref, err = db.LeaseRef(t.mainConversationRef(), runnerID, 30*time.Second)
+		if err != nil {
+			return nil, err
+		}
+	}
 	cfg.Client, err = t.newLLMClient(apiKey)
 	if err != nil {
+		_ = cfg.Ref.Close()
 		return nil, err
 	}
 	cfg.Model = t.baseConfig.Model
@@ -766,15 +765,18 @@ func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = modelpkg.DefaultMaxTurns
 	}
-	toolset := append([]tools.Tool(nil), t.baseConfig.Tools...)
-	if !cfg.DisableTools && t.zoaFunctionTools != nil {
-		zoaTools, err := t.zoaFunctionTools()
-		if err != nil {
-			return nil, fmt.Errorf("initialize zoafunction tools: %w", err)
+	if cfg.Tools == nil {
+		toolset := append([]tools.Tool(nil), t.baseConfig.Tools...)
+		if t.zoaFunctionTools != nil {
+			zoaTools, err := t.zoaFunctionTools()
+			if err != nil {
+				_ = cfg.Ref.Close()
+				return nil, fmt.Errorf("initialize zoafunction tools: %w", err)
+			}
+			toolset = append(toolset, zoaTools...)
 		}
-		toolset = append(toolset, zoaTools...)
+		cfg.Tools = toolset
 	}
-	cfg.Tools = toolset
 	return convrunner.NewRunner(cfg)
 }
 

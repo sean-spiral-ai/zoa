@@ -7,9 +7,28 @@ import (
 	"time"
 )
 
-func (db *DB) AcquireLease(name string, leaseHolder string, duration time.Duration) error {
-	if strings.TrimSpace(leaseHolder) == "" {
-		return fmt.Errorf("lease holder is required")
+func (db *DB) LeaseRef(name string, runnerID string, duration time.Duration) (*LeasedRef, error) {
+	if err := db.acquireLease(name, runnerID, duration); err != nil {
+		return nil, err
+	}
+	ref, err := db.GetRef(name)
+	if err != nil {
+		_ = db.releaseLease(name, runnerID)
+		return nil, err
+	}
+	return &LeasedRef{
+		db:            db,
+		name:          ref.Name,
+		runnerID:      strings.TrimSpace(runnerID),
+		leaseDuration: duration,
+		hash:          ref.Hash,
+		leaseUntil:    ref.LeaseUntil,
+	}, nil
+}
+
+func (db *DB) acquireLease(name string, runnerID string, duration time.Duration) error {
+	if strings.TrimSpace(runnerID) == "" {
+		return fmt.Errorf("runner id is required")
 	}
 	tx, err := db.sql.Begin()
 	if err != nil {
@@ -23,14 +42,14 @@ func (db *DB) AcquireLease(name string, leaseHolder string, duration time.Durati
 	if err != nil {
 		return err
 	}
-	if ref.LeasedBy != "" && ref.LeasedBy != leaseHolder && !leaseExpired {
+	if ref.LeasedBy != "" && ref.LeasedBy != runnerID && !leaseExpired {
 		return ErrRefLeased
 	}
 	if _, err := tx.Exec(
 		`UPDATE conversation_ref
 		 SET leased_by = ?, lease_until = ?, updated_at = ?
 		 WHERE name = ?`,
-		leaseHolder,
+		runnerID,
 		time.Now().UTC().Add(duration).Format(time.RFC3339Nano),
 		time.Now().UTC().Format(time.RFC3339Nano),
 		name,
@@ -40,7 +59,7 @@ func (db *DB) AcquireLease(name string, leaseHolder string, duration time.Durati
 	return tx.Commit()
 }
 
-func (db *DB) RenewLease(name string, leaseHolder string, duration time.Duration) error {
+func (db *DB) renewLease(name string, runnerID string, duration time.Duration) error {
 	tx, err := db.sql.Begin()
 	if err != nil {
 		return fmt.Errorf("begin renew lease: %w", err)
@@ -53,7 +72,7 @@ func (db *DB) RenewLease(name string, leaseHolder string, duration time.Duration
 	if err != nil {
 		return err
 	}
-	if ref.LeasedBy != leaseHolder {
+	if ref.LeasedBy != runnerID {
 		return ErrLeaseNotHeld
 	}
 	if _, err := tx.Exec(
@@ -69,14 +88,14 @@ func (db *DB) RenewLease(name string, leaseHolder string, duration time.Duration
 	return tx.Commit()
 }
 
-func (db *DB) ReleaseLease(name string, leaseHolder string) error {
+func (db *DB) releaseLease(name string, runnerID string) error {
 	res, err := db.sql.Exec(
 		`UPDATE conversation_ref
 		 SET leased_by = '', lease_until = '', updated_at = ?
 		 WHERE name = ? AND leased_by = ?`,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		name,
-		leaseHolder,
+		runnerID,
 	)
 	if err != nil {
 		return fmt.Errorf("release lease: %w", err)
@@ -85,9 +104,9 @@ func (db *DB) ReleaseLease(name string, leaseHolder string) error {
 	return nil
 }
 
-func loadRefForUpdate(tx *sql.Tx, name string) (Ref, bool, error) {
+func loadRefForUpdate(tx *sql.Tx, name string) (RefSnapshot, bool, error) {
 	var (
-		ref            Ref
+		ref            RefSnapshot
 		leaseUntilText string
 	)
 	err := tx.QueryRow(
@@ -95,10 +114,10 @@ func loadRefForUpdate(tx *sql.Tx, name string) (Ref, bool, error) {
 		strings.TrimSpace(name),
 	).Scan(&ref.Name, &ref.Hash, &ref.LeasedBy, &leaseUntilText)
 	if err == sql.ErrNoRows {
-		return Ref{}, false, ErrRefNotFound
+		return RefSnapshot{}, false, ErrRefNotFound
 	}
 	if err != nil {
-		return Ref{}, false, fmt.Errorf("load ref: %w", err)
+		return RefSnapshot{}, false, fmt.Errorf("load ref: %w", err)
 	}
 	ref.LeaseUntil = parseLeaseUntil(leaseUntilText)
 	return ref, leaseExpired(ref.LeaseUntil), nil
