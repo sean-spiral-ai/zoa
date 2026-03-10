@@ -26,6 +26,35 @@ func (db *DB) GetRef(name string) (Ref, error) {
 	return ref, nil
 }
 
+func (db *DB) ListRefs() ([]Ref, error) {
+	rows, err := db.sql.Query(
+		`SELECT name, hash, leased_by, lease_until
+		 FROM conversation_ref
+		 ORDER BY name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list refs: %w", err)
+	}
+	defer rows.Close()
+
+	refs := make([]Ref, 0)
+	for rows.Next() {
+		var (
+			ref            Ref
+			leaseUntilText string
+		)
+		if err := rows.Scan(&ref.Name, &ref.Hash, &ref.LeasedBy, &leaseUntilText); err != nil {
+			return nil, fmt.Errorf("scan ref: %w", err)
+		}
+		ref.LeaseUntil = parseLeaseUntil(leaseUntilText)
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate refs: %w", err)
+	}
+	return refs, nil
+}
+
 func (db *DB) CreateRef(name string, hash string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

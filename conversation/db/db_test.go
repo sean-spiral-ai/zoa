@@ -212,6 +212,39 @@ func TestAdvanceRefRejectsOtherLeaseHolder(t *testing.T) {
 	}
 }
 
+func TestListRefsReturnsSortedRefsWithLeaseState(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.CreateRef("sessions/default", RootHash); err != nil {
+		t.Fatalf("create session ref: %v", err)
+	}
+	if err := db.CreateRef("tasks/task-2/main", RootHash); err != nil {
+		t.Fatalf("create task ref: %v", err)
+	}
+	if err := db.AcquireLease("tasks/task-2/main", "runner-1", time.Minute); err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+
+	refs, err := db.ListRefs()
+	if err != nil {
+		t.Fatalf("list refs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("ref count = %d, want 2", len(refs))
+	}
+	if refs[0].Name != "sessions/default" {
+		t.Fatalf("first ref = %q, want sessions/default", refs[0].Name)
+	}
+	if refs[1].Name != "tasks/task-2/main" {
+		t.Fatalf("second ref = %q, want tasks/task-2/main", refs[1].Name)
+	}
+	if refs[1].LeasedBy != "runner-1" {
+		t.Fatalf("leased by = %q, want runner-1", refs[1].LeasedBy)
+	}
+	if !refs[1].LeaseUntil.After(time.Now().UTC()) {
+		t.Fatalf("lease_until = %v, want future time", refs[1].LeaseUntil)
+	}
+}
+
 func TestSetRefAndMissingNode(t *testing.T) {
 	db := openTestDB(t)
 	if err := db.CreateRef("sessions/default", RootHash); err != nil {
