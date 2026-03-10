@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"zoa/conversation"
 	convdb "zoa/conversation/db"
-	convrunner "zoa/conversation/runner"
 	"zoa/internal/agentloop/llm"
 	modelpkg "zoa/internal/agentloop/model"
 	tools "zoa/internal/agentloop/tools"
@@ -528,11 +528,11 @@ func (t *TaskContext) NLExec(prompt string, data map[string]any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	r, err := t.newMainRunner(convrunner.RunnerConfig{})
+	r, err := t.newMainRunner(conversation.ExecutorConfig{})
 	if err != nil {
 		return "", err
 	}
-	if err := r.Run(t.ctx, instruction, convrunner.RunOptions{}); err != nil {
+	if err := r.Run(t.ctx, instruction, conversation.RunOptions{}); err != nil {
 		return "", err
 	}
 	res := r.Wait()
@@ -556,11 +556,11 @@ func (t *TaskContext) NLExecTyped(prompt string, data map[string]any, out any) e
 	if err != nil {
 		return err
 	}
-	r, err := t.newMainRunner(convrunner.RunnerConfig{Tools: []tools.Tool{}})
+	r, err := t.newMainRunner(conversation.ExecutorConfig{Tools: []tools.Tool{}})
 	if err != nil {
 		return err
 	}
-	if err := r.Run(t.ctx, instruction, convrunner.RunOptions{
+	if err := r.Run(t.ctx, instruction, conversation.RunOptions{
 		ResponseMimeType: llm.JSONSchemaFormat{SchemaObject: schema}.MimeType(),
 		ResponseSchema:   schema,
 	}); err != nil {
@@ -736,7 +736,7 @@ func (t *TaskContext) appendToMainRef(msg llm.Message) error {
 	return err
 }
 
-func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.ConversationRunner, error) {
+func (t *TaskContext) newMainRunner(extra conversation.ExecutorConfig) (*conversation.Executor, error) {
 	apiKey, err := t.resolveAPIKey()
 	if err != nil {
 		return nil, err
@@ -777,7 +777,7 @@ func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.
 		}
 		cfg.Tools = toolset
 	}
-	return convrunner.NewRunner(cfg)
+	return conversation.NewExecutor(cfg)
 }
 
 func (t *TaskContext) newLLMClient(credential string) (llm.Client, error) {

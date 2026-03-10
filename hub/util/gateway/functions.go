@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"zoa/conversation"
 	convdb "zoa/conversation/db"
-	convrunner "zoa/conversation/runner"
 	"zoa/hub"
 	"zoa/internal/agentloop/llm"
 	modelpkg "zoa/internal/agentloop/model"
@@ -585,7 +585,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	if err != nil {
 		return "", err
 	}
-	r, err := convrunner.NewRunner(convrunner.RunnerConfig{
+	r, err := conversation.NewExecutor(conversation.ExecutorConfig{
 		Ref:          leasedRef,
 		Client:       client,
 		Model:        model,
@@ -598,7 +598,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 		_ = leasedRef.Close()
 		return "", err
 	}
-	if err := r.Run(promptCtx, message, convrunner.RunOptions{}); err != nil {
+	if err := r.Run(promptCtx, message, conversation.RunOptions{}); err != nil {
 		return "", err
 	}
 	res := r.Wait()

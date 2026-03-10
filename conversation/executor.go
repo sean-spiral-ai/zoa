@@ -1,4 +1,4 @@
-package runner
+package conversation
 
 import (
 	"context"
@@ -31,7 +31,7 @@ type RunResult struct {
 	Err       error
 }
 
-type RunnerConfig struct {
+type ExecutorConfig struct {
 	Ref          *convdb.LeasedRef
 	Client       llm.Client
 	Model        string
@@ -47,7 +47,7 @@ type RunOptions struct {
 	ResponseSchema   map[string]any
 }
 
-type ConversationRunner struct {
+type Executor struct {
 	ref          *convdb.LeasedRef
 	client       llm.Client
 	model        string
@@ -68,7 +68,7 @@ type ConversationRunner struct {
 	leaseStop        chan struct{}
 }
 
-func NewRunner(cfg RunnerConfig) (*ConversationRunner, error) {
+func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 	if cfg.Ref == nil {
 		return nil, fmt.Errorf("ref is required")
 	}
@@ -81,7 +81,7 @@ func NewRunner(cfg RunnerConfig) (*ConversationRunner, error) {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 20
 	}
-	return &ConversationRunner{
+	return &Executor{
 		ref:          cfg.Ref,
 		client:       cfg.Client,
 		model:        cfg.Model,
@@ -93,76 +93,74 @@ func NewRunner(cfg RunnerConfig) (*ConversationRunner, error) {
 	}, nil
 }
 
-func (r *ConversationRunner) Run(ctx context.Context, userMessage string, opts RunOptions) error {
+func (e *Executor) Run(ctx context.Context, userMessage string, opts RunOptions) error {
 	if strings.TrimSpace(userMessage) == "" {
 		return fmt.Errorf("user message is required")
 	}
-	r.mu.Lock()
-	if r.running {
-		r.mu.Unlock()
+	e.mu.Lock()
+	if e.running {
+		e.mu.Unlock()
 		return ErrRunInProgress
 	}
-	r.running = true
-	r.done = make(chan struct{})
-	r.interruptCh = make(chan struct{})
-	r.stopOnce = sync.Once{}
-	r.leaseStop = make(chan struct{})
+	e.running = true
+	e.done = make(chan struct{})
+	e.interruptCh = make(chan struct{})
+	e.stopOnce = sync.Once{}
+	e.leaseStop = make(chan struct{})
 	runCtx, cancel := context.WithCancel(ctx)
-	r.runCancel = cancel
-	r.mu.Unlock()
+	e.runCancel = cancel
+	e.mu.Unlock()
 
-	if err := r.ensureSystemPrompt(); err != nil {
-		r.finish(RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Err: err})
+	if err := e.ensureSystemPrompt(); err != nil {
+		e.finish(RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Err: err})
 		return nil
 	}
 
-	newHead, err := r.ref.Append(convdb.Message{
+	if _, err := e.ref.Append(convdb.Message{
 		Role: llm.RoleUser,
 		Text: strings.TrimSpace(userMessage),
-	})
-	if err != nil {
-		r.finish(RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Err: err})
+	}); err != nil {
+		e.finish(RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Err: err})
 		return nil
 	}
-	_ = newHead
 
-	go r.renewLeaseLoop()
+	go e.renewLeaseLoop()
 	go func() {
-		result := r.runLoop(runCtx, opts)
-		r.finish(result)
+		result := e.runLoop(runCtx, opts)
+		e.finish(result)
 	}()
 	return nil
 }
 
-func (r *ConversationRunner) Wait() RunResult {
-	r.mu.Lock()
-	done := r.done
-	result := r.result
-	running := r.running
-	r.mu.Unlock()
+func (e *Executor) Wait() RunResult {
+	e.mu.Lock()
+	done := e.done
+	result := e.result
+	running := e.running
+	e.mu.Unlock()
 	if !running || done == nil {
 		return result
 	}
 	<-done
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.result
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.result
 }
 
-func (r *ConversationRunner) Stop() {
-	r.mu.Lock()
-	done := r.done
-	cancel := r.runCancel
-	activeCancel := r.activeToolCancel
-	grace := r.gracePeriod
-	r.mu.Unlock()
+func (e *Executor) Stop() {
+	e.mu.Lock()
+	done := e.done
+	cancel := e.runCancel
+	activeCancel := e.activeToolCancel
+	grace := e.gracePeriod
+	e.mu.Unlock()
 	if done == nil {
-		_ = r.ref.Close()
+		_ = e.ref.Close()
 		return
 	}
 
-	r.stopOnce.Do(func() {
-		close(r.interruptCh)
+	e.stopOnce.Do(func() {
+		close(e.interruptCh)
 	})
 
 	select {
@@ -176,64 +174,64 @@ func (r *ConversationRunner) Stop() {
 		}
 		<-done
 	}
-	_ = r.ref.Close()
+	_ = e.ref.Close()
 }
 
-func (r *ConversationRunner) Release() error {
-	r.mu.Lock()
-	running := r.running
-	r.mu.Unlock()
+func (e *Executor) Release() error {
+	e.mu.Lock()
+	running := e.running
+	e.mu.Unlock()
 	if running {
 		return ErrRunInProgress
 	}
-	return r.ref.Close()
+	return e.ref.Close()
 }
 
-func (r *ConversationRunner) HeadHash() string {
-	return r.ref.Hash()
+func (e *Executor) HeadHash() string {
+	return e.ref.Hash()
 }
 
-func (r *ConversationRunner) Ref() string {
-	return r.ref.Name()
+func (e *Executor) Ref() string {
+	return e.ref.Name()
 }
 
-func (r *ConversationRunner) ensureSystemPrompt() error {
-	if r.systemPrompt == "" {
+func (e *Executor) ensureSystemPrompt() error {
+	if e.systemPrompt == "" {
 		return nil
 	}
-	if len(mustLoadChain(r.ref)) > 0 {
+	if len(mustLoadChain(e.ref)) > 0 {
 		return nil
 	}
-	_, err := r.ref.Append(convdb.Message{
+	_, err := e.ref.Append(convdb.Message{
 		Role: llm.RoleSystem,
-		Text: r.systemPrompt,
+		Text: e.systemPrompt,
 	})
 	return err
 }
 
-func (r *ConversationRunner) runLoop(ctx context.Context, opts RunOptions) RunResult {
-	for turn := 1; turn <= r.maxTurns; turn++ {
-		if r.interrupted() {
-			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn - 1}
+func (e *Executor) runLoop(ctx context.Context, opts RunOptions) RunResult {
+	for turn := 1; turn <= e.maxTurns; turn++ {
+		if e.interrupted() {
+			return RunResult{Status: RunInterrupted, HeadHash: e.HeadHash(), Turns: turn - 1}
 		}
-		chain, err := r.ref.LoadChain()
+		chain, err := e.ref.LoadChain()
 		if err != nil {
-			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn - 1, Err: err}
+			return RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Turns: turn - 1, Err: err}
 		}
 
-		resp, err := r.client.Complete(ctx, llm.CompletionRequest{
-			Model:            r.model,
+		resp, err := e.client.Complete(ctx, llm.CompletionRequest{
+			Model:            e.model,
 			Messages:         chainMessages(chain),
-			Tools:            r.registry.Specs(),
-			Temperature:      r.temperature,
+			Tools:            e.registry.Specs(),
+			Temperature:      e.temperature,
 			ResponseMimeType: strings.TrimSpace(opts.ResponseMimeType),
 			ResponseSchema:   cloneMap(opts.ResponseSchema),
 		})
 		if err != nil {
-			if r.interrupted() || errors.Is(ctx.Err(), context.Canceled) {
-				return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn - 1}
+			if e.interrupted() || errors.Is(ctx.Err(), context.Canceled) {
+				return RunResult{Status: RunInterrupted, HeadHash: e.HeadHash(), Turns: turn - 1}
 			}
-			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn - 1, Err: err}
+			return RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Turns: turn - 1, Err: err}
 		}
 
 		assistantMsg := convdb.Message{
@@ -242,35 +240,35 @@ func (r *ConversationRunner) runLoop(ctx context.Context, opts RunOptions) RunRe
 			Parts:     cloneAssistantParts(resp.Parts),
 			ToolCalls: cloneToolCalls(resp.ToolCalls),
 		}
-		if _, err := r.ref.Append(assistantMsg); err != nil {
-			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn - 1, Err: err}
+		if _, err := e.ref.Append(assistantMsg); err != nil {
+			return RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Turns: turn - 1, Err: err}
 		}
 
-		if r.interrupted() {
-			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn}
+		if e.interrupted() {
+			return RunResult{Status: RunInterrupted, HeadHash: e.HeadHash(), Turns: turn}
 		}
 		if len(resp.ToolCalls) == 0 {
-			return RunResult{Status: RunCompleted, FinalText: strings.TrimSpace(resp.Text), HeadHash: r.HeadHash(), Turns: turn}
+			return RunResult{Status: RunCompleted, FinalText: strings.TrimSpace(resp.Text), HeadHash: e.HeadHash(), Turns: turn}
 		}
 
 		results := make([]llm.ToolResult, len(resp.ToolCalls))
 		for i, call := range resp.ToolCalls {
-			if r.interrupted() {
+			if e.interrupted() {
 				fillInterruptedResults(results, resp.ToolCalls, i)
 				break
 			}
-			tool, ok := r.registry.Get(call.Name)
+			tool, ok := e.registry.Get(call.Name)
 			if !ok {
 				results[i] = interruptedOrErrorToolResult(call, fmt.Sprintf("unknown tool: %s", call.Name), false)
 				continue
 			}
 			toolCtx, toolCancel := context.WithCancel(ctx)
-			r.setActiveToolCancel(toolCancel)
+			e.setActiveToolCancel(toolCancel)
 			output, execErr := tool.Execute(toolCtx, call.Args)
-			r.setActiveToolCancel(nil)
+			e.setActiveToolCancel(nil)
 			toolCancel()
 
-			if r.interrupted() {
+			if e.interrupted() {
 				fillInterruptedResults(results, resp.ToolCalls, i)
 				break
 			}
@@ -285,38 +283,38 @@ func (r *ConversationRunner) runLoop(ctx context.Context, opts RunOptions) RunRe
 			}
 		}
 
-		if _, err := r.ref.Append(convdb.Message{
+		if _, err := e.ref.Append(convdb.Message{
 			Role:        llm.RoleTool,
 			ToolResults: results,
 		}); err != nil {
-			return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: turn, Err: err}
+			return RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Turns: turn, Err: err}
 		}
-		if r.interrupted() {
-			return RunResult{Status: RunInterrupted, HeadHash: r.HeadHash(), Turns: turn}
+		if e.interrupted() {
+			return RunResult{Status: RunInterrupted, HeadHash: e.HeadHash(), Turns: turn}
 		}
 	}
-	return RunResult{Status: RunErrored, HeadHash: r.HeadHash(), Turns: r.maxTurns, Err: fmt.Errorf("max turns reached")}
+	return RunResult{Status: RunErrored, HeadHash: e.HeadHash(), Turns: e.maxTurns, Err: fmt.Errorf("max turns reached")}
 }
 
-func (r *ConversationRunner) interrupted() bool {
+func (e *Executor) interrupted() bool {
 	select {
-	case <-r.interruptCh:
+	case <-e.interruptCh:
 		return true
 	default:
 		return false
 	}
 }
 
-func (r *ConversationRunner) finish(result RunResult) {
-	r.mu.Lock()
-	r.result = result
-	r.running = false
-	done := r.done
-	cancel := r.runCancel
-	leaseStop := r.leaseStop
-	r.runCancel = nil
-	r.activeToolCancel = nil
-	r.mu.Unlock()
+func (e *Executor) finish(result RunResult) {
+	e.mu.Lock()
+	e.result = result
+	e.running = false
+	done := e.done
+	cancel := e.runCancel
+	leaseStop := e.leaseStop
+	e.runCancel = nil
+	e.activeToolCancel = nil
+	e.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
@@ -324,14 +322,14 @@ func (r *ConversationRunner) finish(result RunResult) {
 	if leaseStop != nil {
 		close(leaseStop)
 	}
-	_ = r.ref.Close()
+	_ = e.ref.Close()
 	if done != nil {
 		close(done)
 	}
 }
 
-func (r *ConversationRunner) renewLeaseLoop() {
-	interval := time.Until(r.ref.LeaseDeadline()) / 2
+func (e *Executor) renewLeaseLoop() {
+	interval := time.Until(e.ref.LeaseDeadline()) / 2
 	if interval <= 0 {
 		interval = time.Second
 	}
@@ -339,11 +337,11 @@ func (r *ConversationRunner) renewLeaseLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-r.leaseStop:
+		case <-e.leaseStop:
 			return
 		case <-ticker.C:
-			_ = r.ref.Renew()
-			nextInterval := time.Until(r.ref.LeaseDeadline()) / 2
+			_ = e.ref.Renew()
+			nextInterval := time.Until(e.ref.LeaseDeadline()) / 2
 			if nextInterval <= 0 {
 				nextInterval = time.Second
 			}
@@ -352,10 +350,10 @@ func (r *ConversationRunner) renewLeaseLoop() {
 	}
 }
 
-func (r *ConversationRunner) setActiveToolCancel(cancel context.CancelFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.activeToolCancel = cancel
+func (e *Executor) setActiveToolCancel(cancel context.CancelFunc) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.activeToolCancel = cancel
 }
 
 func chainMessages(chain []convdb.Node) []llm.Message {
@@ -423,17 +421,17 @@ func cloneMap(in map[string]any) map[string]any {
 }
 
 func cloneAny(v any) any {
-	switch t := v.(type) {
+	switch tv := v.(type) {
 	case map[string]any:
-		return cloneMap(t)
+		return cloneMap(tv)
 	case []any:
-		out := make([]any, len(t))
-		for i := range t {
-			out[i] = cloneAny(t[i])
+		out := make([]any, len(tv))
+		for i, item := range tv {
+			out[i] = cloneAny(item)
 		}
 		return out
 	default:
-		return v
+		return tv
 	}
 }
 

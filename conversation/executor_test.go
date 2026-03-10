@@ -1,4 +1,4 @@
-package runner
+package conversation
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	tools "zoa/internal/agentloop/tools"
 )
 
-func TestRunnerCompletesWithoutTools(t *testing.T) {
+func TestExecutorCompletesWithoutTools(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
 
@@ -26,9 +26,9 @@ func TestRunnerCompletesWithoutTools(t *testing.T) {
 		},
 	}
 
-	r, err := newTestRunner(db, client, nil)
+	r, err := newTestExecutor(db, client, nil)
 	if err != nil {
-		t.Fatalf("new runner: %v", err)
+		t.Fatalf("new executor: %v", err)
 	}
 	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
@@ -39,7 +39,7 @@ func TestRunnerCompletesWithoutTools(t *testing.T) {
 	}
 }
 
-func TestRunnerCompletesToolLoop(t *testing.T) {
+func TestExecutorCompletesToolLoop(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
 
@@ -61,9 +61,9 @@ func TestRunnerCompletesToolLoop(t *testing.T) {
 		}
 	}
 
-	r, err := newTestRunner(db, client, []tools.Tool{echoTool{}})
+	r, err := newTestExecutor(db, client, []tools.Tool{echoTool{}})
 	if err != nil {
-		t.Fatalf("new runner: %v", err)
+		t.Fatalf("new executor: %v", err)
 	}
 	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
@@ -74,7 +74,7 @@ func TestRunnerCompletesToolLoop(t *testing.T) {
 	}
 }
 
-func TestRunnerInterruptsMidToolCall(t *testing.T) {
+func TestExecutorInterruptsMidToolCall(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
 
@@ -91,7 +91,7 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lease ref: %v", err)
 	}
-	r, err := NewRunner(RunnerConfig{
+	r, err := NewExecutor(ExecutorConfig{
 		Ref:          leasedRef,
 		Client:       client,
 		Model:        "test-model",
@@ -103,7 +103,7 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 		GracePeriod: 10 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("new runner: %v", err)
+		t.Fatalf("new executor: %v", err)
 	}
 	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
@@ -126,7 +126,7 @@ func TestRunnerInterruptsMidToolCall(t *testing.T) {
 	}
 }
 
-func TestRunnerRejectsConcurrentRun(t *testing.T) {
+func TestExecutorRejectsConcurrentRun(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
 	wait := make(chan struct{})
@@ -136,9 +136,9 @@ func TestRunnerRejectsConcurrentRun(t *testing.T) {
 			return llm.CompletionResponse{Text: "done"}, nil
 		},
 	}
-	r, err := newTestRunner(db, client, nil)
+	r, err := newTestExecutor(db, client, nil)
 	if err != nil {
-		t.Fatalf("new runner: %v", err)
+		t.Fatalf("new executor: %v", err)
 	}
 	if err := r.Run(context.Background(), "hello", RunOptions{}); err != nil {
 		t.Fatalf("run: %v", err)
@@ -150,15 +150,15 @@ func TestRunnerRejectsConcurrentRun(t *testing.T) {
 	_ = r.Wait()
 }
 
-func TestRunnerReleaseAllowsNewLease(t *testing.T) {
+func TestExecutorReleaseAllowsNewLease(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
-	r1, err := newTestRunner(db, &stubClient{}, nil)
+	r1, err := newTestExecutor(db, &stubClient{}, nil)
 	if err != nil {
-		t.Fatalf("new runner 1: %v", err)
+		t.Fatalf("new executor 1: %v", err)
 	}
 	if err := r1.Release(); err != nil {
-		t.Fatalf("release runner 1: %v", err)
+		t.Fatalf("release executor 1: %v", err)
 	}
 	ref2, err := db.LeaseRef("sessions/default", "runner-2")
 	if err != nil {
@@ -167,7 +167,7 @@ func TestRunnerReleaseAllowsNewLease(t *testing.T) {
 	defer func() { _ = ref2.Close() }()
 }
 
-func TestRunnerRunOptionsFlowToClient(t *testing.T) {
+func TestExecutorRunOptionsFlowToClient(t *testing.T) {
 	db := openRunnerDB(t)
 	mustCreateRef(t, db, "sessions/default")
 	client := &stubClient{
@@ -181,9 +181,9 @@ func TestRunnerRunOptionsFlowToClient(t *testing.T) {
 			return llm.CompletionResponse{Text: `{"ok":true}`}, nil
 		},
 	}
-	r, err := newTestRunner(db, client, []tools.Tool{})
+	r, err := newTestExecutor(db, client, []tools.Tool{})
 	if err != nil {
-		t.Fatalf("new runner: %v", err)
+		t.Fatalf("new executor: %v", err)
 	}
 	if err := r.Run(context.Background(), "hello", RunOptions{
 		ResponseMimeType: "application/json",
@@ -255,12 +255,12 @@ func mustCreateRef(t *testing.T, db *convdb.DB, name string) {
 	}
 }
 
-func newTestRunner(db *convdb.DB, client llm.Client, toolset []tools.Tool) (*ConversationRunner, error) {
+func newTestExecutor(db *convdb.DB, client llm.Client, toolset []tools.Tool) (*Executor, error) {
 	leasedRef, err := db.LeaseRef("sessions/default", "runner-1")
 	if err != nil {
 		return nil, err
 	}
-	return NewRunner(RunnerConfig{
+	return NewExecutor(ExecutorConfig{
 		Ref:          leasedRef,
 		Client:       client,
 		Model:        "test-model",
