@@ -32,43 +32,51 @@ type taskConversationConfig struct {
 }
 
 type TaskContextOptions struct {
-	APIKey      string
-	CWD         string
-	Model       string
-	MaxTurns    int
-	Timeout     time.Duration
-	Temperature float64
-	SQLitePath  string
-	Namespace   string
-	AssetsDir   string
+	APIKey                 string
+	CWD                    string
+	Model                  string
+	MaxTurns               int
+	Timeout                time.Duration
+	Temperature            float64
+	SQLitePath             string
+	RuntimeSQLitePath      string
+	ConversationSQLitePath string
+	Namespace              string
+	AssetsDir              string
 
-	logger       *slog.Logger
-	sqlDB        sqlExecutor
-	registerPump func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask    func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools     func() ([]tools.Tool, error)
-	loadMixin    func(id string) (*Mixin, bool)
-	taskID       string
+	logger         *slog.Logger
+	sqlDB          sqlExecutor
+	runtimeSQLDB   sqlExecutor
+	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools       func() ([]tools.Tool, error)
+	loadMixin      func(id string) (*Mixin, bool)
+	conversationDB *convdb.DB
+	taskID         string
 }
 
 type TaskContext struct {
-	ctx                context.Context
-	logger             *slog.Logger
-	apiKey             string
-	baseConfig         taskConversationConfig
-	conversationDB     *convdb.DB
-	ownsConversationDB bool
-	sqlDB              sqlExecutor
-	ownsSQL            bool
-	namespace          string
-	sqlitePath         string
-	assetsDir          string
-	tmpDirs            []string
-	registerPump       func(pumpID, functionID string, input map[string]any, interval time.Duration) error
-	spawnTask          func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools           func() ([]tools.Tool, error)
-	loadMixin          func(id string) (*Mixin, bool)
-	taskID             string
+	ctx                    context.Context
+	logger                 *slog.Logger
+	apiKey                 string
+	baseConfig             taskConversationConfig
+	conversationDB         *convdb.DB
+	ownsConversationDB     bool
+	sqlDB                  sqlExecutor
+	ownsSQL                bool
+	runtimeSQLDB           sqlExecutor
+	ownsRuntimeSQL         bool
+	namespace              string
+	sqlitePath             string
+	runtimeSQLitePath      string
+	conversationSQLitePath string
+	assetsDir              string
+	tmpDirs                []string
+	registerPump           func(pumpID, functionID string, input map[string]any, interval time.Duration) error
+	spawnTask              func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
+	lmfTools               func() ([]tools.Tool, error)
+	loadMixin              func(id string) (*Mixin, bool)
+	taskID                 string
 }
 
 type SqlExecResult struct {
@@ -131,6 +139,26 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	if sqlDB == nil {
 		return nil, fmt.Errorf("sqlite is required for task context")
 	}
+	runtimeSQLDB := opts.runtimeSQLDB
+	ownsRuntimeSQL := false
+	if runtimeSQLDB == nil && strings.TrimSpace(opts.RuntimeSQLitePath) != "" {
+		db, _, err := openSQLite(opts.RuntimeSQLitePath)
+		if err != nil {
+			if ownsSQL {
+				_ = sqlDB.Close()
+			}
+			return nil, err
+		}
+		runtimeSQLDB = db
+		ownsRuntimeSQL = true
+	}
+	if runtimeSQLDB == nil {
+		runtimeSQLDB = sqlDB
+	}
+	conversationSQLitePath := strings.TrimSpace(opts.ConversationSQLitePath)
+	if conversationSQLitePath == "" {
+		conversationSQLitePath = ConversationSQLitePath(firstNonEmpty(opts.RuntimeSQLitePath, opts.SQLitePath))
+	}
 
 	tcLogger := opts.logger
 	if tcLogger == nil {
@@ -139,20 +167,25 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 	tcLogger = tcLogger.With("component", "task_context")
 
 	return &TaskContext{
-		ctx:          ctx,
-		logger:       tcLogger,
-		apiKey:       apiKey,
-		baseConfig:   baseConfig,
-		sqlDB:        sqlDB,
-		ownsSQL:      ownsSQL,
-		namespace:    opts.Namespace,
-		sqlitePath:   opts.SQLitePath,
-		assetsDir:    opts.AssetsDir,
-		registerPump: opts.registerPump,
-		spawnTask:    opts.spawnTask,
-		lmfTools:     opts.lmfTools,
-		loadMixin:    opts.loadMixin,
-		taskID:       strings.TrimSpace(opts.taskID),
+		ctx:                    ctx,
+		logger:                 tcLogger,
+		apiKey:                 apiKey,
+		baseConfig:             baseConfig,
+		sqlDB:                  sqlDB,
+		ownsSQL:                ownsSQL,
+		runtimeSQLDB:           runtimeSQLDB,
+		ownsRuntimeSQL:         ownsRuntimeSQL,
+		namespace:              opts.Namespace,
+		sqlitePath:             opts.SQLitePath,
+		runtimeSQLitePath:      opts.RuntimeSQLitePath,
+		conversationSQLitePath: conversationSQLitePath,
+		assetsDir:              opts.AssetsDir,
+		registerPump:           opts.registerPump,
+		spawnTask:              opts.spawnTask,
+		lmfTools:               opts.lmfTools,
+		loadMixin:              opts.loadMixin,
+		conversationDB:         opts.conversationDB,
+		taskID:                 strings.TrimSpace(opts.taskID),
 	}, nil
 }
 
@@ -165,19 +198,23 @@ func (t *TaskContext) Close() error {
 		_ = os.RemoveAll(dir)
 	}
 	t.tmpDirs = nil
-	if !t.ownsSQL || t.sqlDB == nil {
-		if t.ownsConversationDB && t.conversationDB != nil {
-			return t.conversationDB.Close()
+	var outErr error
+	if t.ownsSQL && t.sqlDB != nil {
+		if err := t.sqlDB.Close(); err != nil {
+			outErr = err
 		}
-		return nil
 	}
-	sqlErr := t.sqlDB.Close()
+	if t.ownsRuntimeSQL && t.runtimeSQLDB != nil && t.runtimeSQLDB != t.sqlDB {
+		if err := t.runtimeSQLDB.Close(); err != nil && outErr == nil {
+			outErr = err
+		}
+	}
 	if t.ownsConversationDB && t.conversationDB != nil {
-		if err := t.conversationDB.Close(); err != nil && sqlErr == nil {
-			sqlErr = err
+		if err := t.conversationDB.Close(); err != nil && outErr == nil {
+			outErr = err
 		}
 	}
-	return sqlErr
+	return outErr
 }
 
 // GetStateDir returns a persistent state directory for this namespace,
@@ -219,10 +256,10 @@ func (t *TaskContext) ConversationDB() (*convdb.DB, error) {
 	if t.conversationDB != nil {
 		return t.conversationDB, nil
 	}
-	if strings.TrimSpace(t.sqlitePath) == "" {
-		return nil, fmt.Errorf("sqlite path is not configured for this task context")
+	if strings.TrimSpace(t.conversationSQLitePath) == "" {
+		return nil, fmt.Errorf("conversation sqlite path is not configured for this task context")
 	}
-	db, err := convdb.Open(t.sqlitePath)
+	db, err := convdb.Open(t.conversationSQLitePath)
 	if err != nil {
 		return nil, err
 	}
@@ -400,11 +437,85 @@ func (t *TaskContext) requireSQL() (sqlExecutor, error) {
 	return t.sqlDB, nil
 }
 
+func (t *TaskContext) requireRuntimeSQL() (sqlExecutor, error) {
+	if t.runtimeSQLDB == nil {
+		return nil, fmt.Errorf("runtime sqlite is not configured for this task context")
+	}
+	return t.runtimeSQLDB, nil
+}
+
 func normalizeSQLValue(v any) any {
 	if b, ok := v.([]byte); ok {
 		return string(b)
 	}
 	return v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (t *TaskContext) runtimeSqlExec(query string, args ...any) (SqlExecResult, error) {
+	db, err := t.requireRuntimeSQL()
+	if err != nil {
+		return SqlExecResult{}, err
+	}
+	res, err := db.ExecContext(t.ctx, query, args...)
+	if err != nil {
+		return SqlExecResult{}, err
+	}
+	out := SqlExecResult{}
+	if rowsAffected, err := res.RowsAffected(); err == nil {
+		out.RowsAffected = rowsAffected
+	}
+	if lastInsertID, err := res.LastInsertId(); err == nil {
+		out.LastInsertID = &lastInsertID
+	}
+	return out, nil
+}
+
+func (t *TaskContext) runtimeSqlQuery(query string, args ...any) (SqlQueryResult, error) {
+	db, err := t.requireRuntimeSQL()
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	rows, err := db.QueryContext(t.ctx, query, args...)
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return SqlQueryResult{}, err
+	}
+	out := SqlQueryResult{
+		Columns: append([]string(nil), cols...),
+		Rows:    make([]map[string]any, 0),
+	}
+	values := make([]any, len(cols))
+	scanArgs := make([]any, len(cols))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(scanArgs...); err != nil {
+			return SqlQueryResult{}, err
+		}
+		item := make(map[string]any, len(cols))
+		for i, name := range cols {
+			item[name] = normalizeSQLValue(values[i])
+		}
+		out.Rows = append(out.Rows, item)
+	}
+	if err := rows.Err(); err != nil {
+		return SqlQueryResult{}, err
+	}
+	return out, nil
 }
 
 // NLExec appends to the TaskContext's persistent conversation and returns raw text.

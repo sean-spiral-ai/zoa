@@ -11,6 +11,22 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func ConversationSQLitePath(stateSQLitePath string) string {
+	path := strings.TrimSpace(stateSQLitePath)
+	if path == "" || path == ":memory:" {
+		return path
+	}
+	return filepath.Join(filepath.Dir(path), "conversation.db")
+}
+
+func UserSQLitePath(runtimeSQLitePath string) string {
+	path := strings.TrimSpace(runtimeSQLitePath)
+	if path == "" || path == ":memory:" {
+		return path
+	}
+	return filepath.Join(filepath.Dir(path), "state.db")
+}
+
 type sqlExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -43,6 +59,10 @@ func openSQLite(sqlitePath string) (*sql.DB, string, error) {
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, "", fmt.Errorf("ping sqlite: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		_ = db.Close()
+		return nil, "", fmt.Errorf("set sqlite WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		_ = db.Close()

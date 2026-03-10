@@ -253,12 +253,12 @@ func (s *TaskLogState) ensureInitialized() error {
 }
 
 func (s *TaskLogState) exec(query string, args ...any) error {
-	_, err := s.tc.SqlExec(query, args...)
+	_, err := s.tc.runtimeSqlExec(query, args...)
 	return err
 }
 
 func (s *TaskLogState) query(query string, args ...any) ([]map[string]any, error) {
-	res, err := s.tc.SqlQuery(query, args...)
+	res, err := s.tc.runtimeSqlQuery(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func (s *TaskLogState) ensureColumn(tableName, columnName, definition string) er
 	if hasColumn {
 		return nil
 	}
-	_, err = s.tc.SqlExec(
+	_, err = s.tc.runtimeSqlExec(
 		fmt.Sprintf(
 			`ALTER TABLE %s ADD COLUMN %s %s`,
 			quoteSQLiteIdentifier(tableName),
@@ -285,7 +285,7 @@ func (s *TaskLogState) ensureColumn(tableName, columnName, definition string) er
 }
 
 func (s *TaskLogState) tableHasColumn(tableName, columnName string) (bool, error) {
-	res, err := s.tc.SqlQuery(fmt.Sprintf("PRAGMA table_info(%s)", quoteSQLiteIdentifier(tableName)))
+	res, err := s.tc.runtimeSqlQuery(fmt.Sprintf("PRAGMA table_info(%s)", quoteSQLiteIdentifier(tableName)))
 	if err != nil {
 		return false, err
 	}

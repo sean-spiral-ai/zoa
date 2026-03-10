@@ -117,7 +117,9 @@ func NewLocalGatewayClient(cfg LocalConfig) (GatewayClient, error) {
 	}
 
 	taskManager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
-		SQLitePath: filepath.Join(sessionDir, "state.db"),
+		SQLitePath:             filepath.Join(sessionDir, "runtime.db"),
+		UserSQLitePath:         filepath.Join(sessionDir, "state.db"),
+		ConversationSQLitePath: filepath.Join(sessionDir, "conversation.db"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize task manager: %w", err)

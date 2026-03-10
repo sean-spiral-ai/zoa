@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	convdb "zoa/conversation/db"
 	"zoa/internal/semtrace"
 	"zoa/llm"
 	tools "zoa/tools"
@@ -50,6 +51,14 @@ type TaskManagerOptions struct {
 	// When set, TaskManager opens and owns this connection.
 	SQLitePath string
 
+	// UserSQLitePath configures the LMFunction user-state SQLite database path.
+	// Defaults to a sibling state.db next to SQLitePath.
+	UserSQLitePath string
+
+	// ConversationSQLitePath configures the conversation SQLite database path.
+	// Defaults to a sibling conversation.db next to SQLitePath.
+	ConversationSQLitePath string
+
 	// Logger is an optional structured logger. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -85,12 +94,13 @@ type pumpRunner struct {
 }
 
 type TaskManager struct {
-	registry *Registry
-	baseCtx  context.Context
-	opts     TaskManagerOptions
-	logger   *slog.Logger
-	sqlDB    *sql.DB
-	taskLog  *TaskLogState
+	registry       *Registry
+	baseCtx        context.Context
+	opts           TaskManagerOptions
+	logger         *slog.Logger
+	sqlDB          *sql.DB
+	conversationDB *convdb.DB
+	taskLog        *TaskLogState
 
 	mu     sync.RWMutex
 	nextID uint64
@@ -137,26 +147,49 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 		manager.pumpCancel()
 		return nil, err
 	}
+	conversationPath := strings.TrimSpace(opts.ConversationSQLitePath)
+	if conversationPath == "" {
+		conversationPath = ConversationSQLitePath(resolvedPath)
+	}
+	userPath := strings.TrimSpace(opts.UserSQLitePath)
+	if userPath == "" {
+		userPath = UserSQLitePath(resolvedPath)
+	}
+	conversationDB, err := convdb.Open(conversationPath)
+	if err != nil {
+		manager.pumpCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	manager.sqlDB = db
+	manager.conversationDB = conversationDB
 	manager.opts.SQLitePath = resolvedPath
+	manager.opts.UserSQLitePath = userPath
+	manager.opts.ConversationSQLitePath = conversationPath
 	taskLogCtx, err := NewTaskContext(ctx, TaskContextOptions{
-		SQLitePath: resolvedPath,
-		sqlDB:      db,
+		SQLitePath:             userPath,
+		RuntimeSQLitePath:      resolvedPath,
+		ConversationSQLitePath: conversationPath,
+		runtimeSQLDB:           db,
+		conversationDB:         conversationDB,
 	})
 	if err != nil {
 		manager.pumpCancel()
+		_ = conversationDB.Close()
 		_ = db.Close()
 		return nil, err
 	}
 	manager.taskLog = LogState(taskLogCtx)
 	if err := manager.taskLog.Init(); err != nil {
 		manager.pumpCancel()
+		_ = conversationDB.Close()
 		_ = db.Close()
 		return nil, err
 	}
 	maxTaskSeq, err := manager.taskLog.MaxTaskSequence()
 	if err != nil {
 		manager.pumpCancel()
+		_ = conversationDB.Close()
 		_ = db.Close()
 		return nil, err
 	}
@@ -182,10 +215,18 @@ func (m *TaskManager) Close() error {
 		cancel()
 	}
 	m.stopAllPumps()
-	if m.sqlDB == nil {
-		return nil
+	var convErr error
+	if m.conversationDB != nil {
+		convErr = m.conversationDB.Close()
 	}
-	return m.sqlDB.Close()
+	if m.sqlDB == nil {
+		return convErr
+	}
+	sqlErr := m.sqlDB.Close()
+	if sqlErr != nil {
+		return sqlErr
+	}
+	return convErr
 }
 
 func (m *TaskManager) Spawn(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
@@ -490,8 +531,10 @@ func (m *TaskManager) runFunction(ctx context.Context, parentTaskID string, fn *
 
 	tcOpts := taskContextOptionsFromInput(input)
 	tcOpts.logger = m.logger
-	tcOpts.SQLitePath = m.opts.SQLitePath
-	tcOpts.sqlDB = m.sqlDB
+	tcOpts.SQLitePath = m.opts.UserSQLitePath
+	tcOpts.RuntimeSQLitePath = m.opts.SQLitePath
+	tcOpts.ConversationSQLitePath = m.opts.ConversationSQLitePath
+	tcOpts.runtimeSQLDB = m.sqlDB
 	tcOpts.registerPump = m.registerPump
 	tcOpts.spawnTask = func(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
 		return m.spawnWithParent(parentTaskID, functionID, input, opts)
@@ -499,6 +542,7 @@ func (m *TaskManager) runFunction(ctx context.Context, parentTaskID string, fn *
 	tcOpts.lmfTools = m.newLMFunctionTools
 	tcOpts.loadMixin = m.registry.GetMixin
 	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
+	tcOpts.conversationDB = m.conversationDB
 	tcOpts.taskID = parentTaskID
 	if fn.AssetsDir != "" {
 		tcOpts.AssetsDir = fn.AssetsDir

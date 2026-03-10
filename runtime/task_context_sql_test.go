@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	convdb "zoa/conversation/db"
 	"zoa/runtime"
 )
 
@@ -118,7 +119,7 @@ func TestTaskManagerSpawnUsesSQLitePath(t *testing.T) {
 	})
 
 	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
-		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+		SQLitePath: filepath.Join(t.TempDir(), "runtime.db"),
 	})
 	if err != nil {
 		t.Fatalf("create task manager: %v", err)
@@ -468,6 +469,167 @@ func TestTaskManagerResumesTaskIDSequenceFromSQLite(t *testing.T) {
 	}
 	if thirdID != "task-3" {
 		t.Fatalf("expected resumed task id task-3, got %s", thirdID)
+	}
+}
+
+func TestTaskManagerSharesConversationDBAcrossParentAndChildTasks(t *testing.T) {
+	registry := runtime.NewRegistry()
+	childDBAddr := make(chan string, 1)
+
+	registry.MustRegister(&runtime.Function{
+		ID:          "test.conversation.child",
+		WhenToUse:   "test only",
+		InputSchema: map[string]any{"type": "object"},
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
+			db, err := tc.ConversationDB()
+			if err != nil {
+				return nil, err
+			}
+			select {
+			case childDBAddr <- fmt.Sprintf("%p", db):
+			default:
+			}
+			if _, err := db.Append(convdb.RootHash, convdb.Message{Role: "user", Text: "child"}); err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	registry.MustRegister(&runtime.Function{
+		ID:          "test.conversation.parent",
+		WhenToUse:   "test only",
+		InputSchema: map[string]any{"type": "object"},
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
+			db, err := tc.ConversationDB()
+			if err != nil {
+				return nil, err
+			}
+			childID, err := tc.Spawn("test.conversation.child", map[string]any{}, runtime.SpawnOptions{})
+			if err != nil {
+				return nil, err
+			}
+			childSnap, _, err := waitForTask(tc, childID, 5*time.Second)
+			if err != nil {
+				return nil, err
+			}
+			if childSnap.Status != runtime.TaskStatusDone {
+				return nil, fmt.Errorf("child status = %s", childSnap.Status)
+			}
+			var childAddr string
+			select {
+			case childAddr = <-childDBAddr:
+			case <-time.After(2 * time.Second):
+				return nil, fmt.Errorf("timed out waiting for child db addr")
+			}
+			return map[string]any{
+				"parent_db_addr": fmt.Sprintf("%p", db),
+				"child_db_addr":  childAddr,
+			}, nil
+		},
+	})
+
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	snapshot, err := runTaskAndWaitSnapshot(manager, "test.conversation.parent", map[string]any{}, runtime.SpawnOptions{})
+	if err != nil {
+		t.Fatalf("run parent: %v", err)
+	}
+	parentAddr, _ := snapshot.Output["parent_db_addr"].(string)
+	childAddr, _ := snapshot.Output["child_db_addr"].(string)
+	if parentAddr == "" || childAddr == "" {
+		t.Fatalf("missing db addresses in output: %#v", snapshot.Output)
+	}
+	if parentAddr != childAddr {
+		t.Fatalf("parent and child conversation db handles differ: parent=%s child=%s", parentAddr, childAddr)
+	}
+}
+
+func TestTaskManagerSeparatesRuntimeAndUserSQLite(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.MustRegister(&runtime.Function{
+		ID:          "test.user.state",
+		WhenToUse:   "test only",
+		InputSchema: map[string]any{"type": "object"},
+		Exec: func(tc *runtime.TaskContext, _ map[string]any) (map[string]any, error) {
+			if _, err := tc.SqlExec(`CREATE TABLE IF NOT EXISTS test__items(id INTEGER PRIMARY KEY, body TEXT NOT NULL)`); err != nil {
+				return nil, err
+			}
+			if _, err := tc.SqlExec(`INSERT INTO test__items(id, body) VALUES (1, 'ok')`); err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true}, nil
+		},
+	})
+
+	root := t.TempDir()
+	manager, err := runtime.NewTaskManager(registry, runtime.TaskManagerOptions{
+		SQLitePath: filepath.Join(root, "runtime.db"),
+	})
+	if err != nil {
+		t.Fatalf("create task manager: %v", err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	snapshot, err := runTaskAndWaitSnapshot(manager, "test.user.state", map[string]any{}, runtime.SpawnOptions{})
+	if err != nil {
+		t.Fatalf("run task: %v", err)
+	}
+	if snapshot.Output["ok"] != true {
+		t.Fatalf("unexpected output: %#v", snapshot.Output)
+	}
+
+	userTC, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
+		SQLitePath: filepath.Join(root, "state.db"),
+	})
+	if err != nil {
+		t.Fatalf("open user state db: %v", err)
+	}
+	defer func() { _ = userTC.Close() }()
+	userRows, err := userTC.SqlQuery(`SELECT COUNT(*) AS c FROM test__items`)
+	if err != nil {
+		t.Fatalf("query user state table: %v", err)
+	}
+	if got, _ := userRows.Rows[0]["c"].(int64); got != 1 {
+		t.Fatalf("user state count = %#v, want 1", userRows.Rows[0]["c"])
+	}
+
+	runtimeTC, err := runtime.NewTaskContext(context.Background(), runtime.TaskContextOptions{
+		SQLitePath:        filepath.Join(root, "runtime.db"),
+		RuntimeSQLitePath: filepath.Join(root, "runtime.db"),
+	})
+	if err != nil {
+		t.Fatalf("open runtime db: %v", err)
+	}
+	defer func() { _ = runtimeTC.Close() }()
+	logRows, err := runtime.LogState(runtimeTC).Summaries(10, false, true)
+	if err != nil {
+		t.Fatalf("read task log summaries: %v", err)
+	}
+	if len(logRows) == 0 {
+		t.Fatalf("expected runtime task log rows")
+	}
+	if _, err := runtimeTC.SqlQuery(`SELECT COUNT(*) AS c FROM test__items`); err == nil {
+		t.Fatalf("runtime db unexpectedly contains user state table")
+	}
+}
+
+func waitForTask(tc *runtime.TaskContext, taskID string, timeout time.Duration) (runtime.TaskSnapshot, bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		res, err := runtime.LogState(tc).Get(taskID)
+		if err == nil && res.Status != runtime.TaskStatusRunning {
+			return res.TaskSnapshot, false, nil
+		}
+		if timeout > 0 && time.Now().After(deadline) {
+			return runtime.TaskSnapshot{}, true, nil
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

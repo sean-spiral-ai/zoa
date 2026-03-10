@@ -26,19 +26,24 @@ func runInspect(args []string) int {
 		limit      int
 		session    string
 	)
-	inspectFlags.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Session directory containing state.db")
-	inspectFlags.StringVar(&sqlitePath, "sqlite-path", "", "Explicit SQLite path (overrides --session-dir)")
+	inspectFlags.StringVar(&sessionDir, "session-dir", ".gateway/sessions/default", "Session directory containing runtime.db, state.db, and conversation.db")
+	inspectFlags.StringVar(&sqlitePath, "sqlite-path", "", "Explicit SQLite path (overrides the default DB selected from --session-dir)")
 	inspectFlags.IntVar(&limit, "limit", 50, "Max rows to print for SQL query results")
 	inspectFlags.StringVar(&session, "session", "default", "Gateway session id (used by inspect conversation)")
 
 	if err := inspectFlags.Parse(args); err != nil {
 		return 2
 	}
-	if strings.TrimSpace(sqlitePath) == "" {
-		sqlitePath = filepath.Join(sessionDir, "state.db")
-	}
 	if limit <= 0 {
 		limit = 20
+	}
+	rest := inspectFlags.Args()
+	defaultPath := filepath.Join(sessionDir, "state.db")
+	if len(rest) > 0 && rest[0] == "conversation" {
+		defaultPath = filepath.Join(sessionDir, "conversation.db")
+	}
+	if strings.TrimSpace(sqlitePath) == "" {
+		sqlitePath = defaultPath
 	}
 	absPath, err := filepath.Abs(sqlitePath)
 	if err != nil {
@@ -57,7 +62,6 @@ func runInspect(args []string) int {
 		return 1
 	}
 
-	rest := inspectFlags.Args()
 	if len(rest) == 0 {
 		return runInspectSummary(absPath, db)
 	}

@@ -136,7 +136,7 @@ func runSlack(args []string) int {
 
 	var conversationDB *convdb.DB
 	if conversationAddr != "" {
-		dbPath := filepath.Join(sessionDir, "state.db")
+		dbPath := filepath.Join(sessionDir, "conversation.db")
 		var storeErr error
 		conversationDB, storeErr = convdb.Open(dbPath)
 		if storeErr != nil {
