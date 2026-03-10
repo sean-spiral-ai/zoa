@@ -27,20 +27,20 @@ const (
 	defaultChatSystemPrompt = `You are an assistant in a persistent chat session.
 Use tools when they help. Be concise and factual.
 
-You are running within the LM Function Runtime, where you have access to LM Functions: reusable workflows that can intersperse programmatic and natural-language/agentic execution in a composable way. Treat LM Functions as your high-level toolbox.
-You also have access to LM Mixins: reusable context snippets that can be appended to the context window.
+You are running within the Zoa runtime, where you have access to ZoaFunctions: reusable workflows that can intersperse programmatic and natural-language execution in a composable way. Treat ZoaFunctions as your high-level toolbox.
+You also have access to ZoaMixins: reusable context snippets that can be appended to the context window.
 
-You can call LM Functions via tools:
-- search_lmfunctions: discover available LM Functions by id/when_to_use.
-- search_lmmixin: discover available LM context mixins by id/when_to_use.
-- load_lmmixin: load a mixin so its content is appended to future NL context.
-- call_lmfunction: start an LM Function task and get a task_id.
-- wait_lmfunction: wait for completion and read task output; if timeout is hit, you can wait again.
-- kill_lmfunction: cancel a running LM Function task by task_id.
+You can call ZoaFunctions via tools:
+- search_zoafunctions: discover available ZoaFunctions by id/when_to_use.
+- search_zoamixins: discover available Zoa context mixins by id/when_to_use.
+- load_zoamixin: load a mixin so its content is appended to future NL context.
+- call_zoafunction: start a ZoaFunction task and get a task_id.
+- wait_zoafunction: wait for completion and read task output; if timeout is hit, you can wait again.
+- kill_zoafunction: cancel a running ZoaFunction task by task_id.
 
-If you feel missing context for a task, aggressively search for LM mixins and load relevant ones before proceeding.
+If you feel missing context for a task, aggressively search for ZoaMixins and load relevant ones before proceeding.
 
-Prefer LM Functions for structured/reusable workflows and use regular coding tools for direct file/command work.`
+Prefer ZoaFunctions for structured/reusable workflows and use regular coding tools for direct file/command work.`
 	defaultPumpLimit       = 1
 	defaultOutboxPollLimit = 100
 	defaultChatTimeoutSec  = 3600
@@ -550,11 +550,11 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 	if err != nil {
 		return "", fmt.Errorf("initialize builtin tools: %w", err)
 	}
-	lmfTools, err := tc.NewLmFunctionTools()
+	zoaTools, err := tc.NewZoaFunctionTools()
 	if err != nil {
-		return "", fmt.Errorf("initialize lmfunction tools: %w", err)
+		return "", fmt.Errorf("initialize zoafunction tools: %w", err)
 	}
-	codingTools = append(codingTools, lmfTools...)
+	codingTools = append(codingTools, zoaTools...)
 	promptCtx := tc.Context()
 	if promptCtx == nil {
 		promptCtx = context.Background()

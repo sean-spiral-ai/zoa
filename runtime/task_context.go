@@ -49,7 +49,7 @@ type TaskContextOptions struct {
 	runtimeSQLDB   sqlExecutor
 	registerPump   func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask      func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools       func() ([]tools.Tool, error)
+	zoaFunctionTools func() ([]tools.Tool, error)
 	loadMixin      func(id string) (*Mixin, bool)
 	conversationDB *convdb.DB
 	taskID         string
@@ -74,7 +74,7 @@ type TaskContext struct {
 	tmpDirs                []string
 	registerPump           func(pumpID, functionID string, input map[string]any, interval time.Duration) error
 	spawnTask              func(functionID string, input map[string]any, opts SpawnOptions) (string, error)
-	lmfTools               func() ([]tools.Tool, error)
+	zoaFunctionTools       func() ([]tools.Tool, error)
 	loadMixin              func(id string) (*Mixin, bool)
 	taskID                 string
 }
@@ -182,7 +182,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		assetsDir:              opts.AssetsDir,
 		registerPump:           opts.registerPump,
 		spawnTask:              opts.spawnTask,
-		lmfTools:               opts.lmfTools,
+		zoaFunctionTools:       opts.zoaFunctionTools,
 		loadMixin:              opts.loadMixin,
 		conversationDB:         opts.conversationDB,
 		taskID:                 strings.TrimSpace(opts.taskID),
@@ -390,14 +390,14 @@ func (t *TaskContext) Spawn(functionID string, input map[string]any, opts SpawnO
 	return t.spawnTask(functionID, cloneMapAny(input), opts)
 }
 
-func (t *TaskContext) NewLmFunctionTools() ([]tools.Tool, error) {
+func (t *TaskContext) NewZoaFunctionTools() ([]tools.Tool, error) {
 	if t == nil {
 		return nil, fmt.Errorf("task context is nil")
 	}
-	if t.lmfTools == nil {
-		return nil, fmt.Errorf("lmfunction tools are unavailable for this task context")
+	if t.zoaFunctionTools == nil {
+		return nil, fmt.Errorf("zoafunction tools are unavailable for this task context")
 	}
-	return t.lmfTools()
+	return t.zoaFunctionTools()
 }
 
 func (t *TaskContext) LoadMixin(id string) error {
@@ -767,12 +767,12 @@ func (t *TaskContext) newMainRunner(extra convrunner.RunnerConfig) (*convrunner.
 		cfg.MaxTurns = modelpkg.DefaultMaxTurns
 	}
 	toolset := append([]tools.Tool(nil), t.baseConfig.Tools...)
-	if !cfg.DisableTools && t.lmfTools != nil {
-		lmfTools, err := t.lmfTools()
+	if !cfg.DisableTools && t.zoaFunctionTools != nil {
+		zoaTools, err := t.zoaFunctionTools()
 		if err != nil {
-			return nil, fmt.Errorf("initialize lmfunction tools: %w", err)
+			return nil, fmt.Errorf("initialize zoafunction tools: %w", err)
 		}
-		toolset = append(toolset, lmfTools...)
+		toolset = append(toolset, zoaTools...)
 	}
 	cfg.Tools = toolset
 	return convrunner.NewRunner(cfg)
@@ -859,7 +859,7 @@ func (e *NLConditionError) Error() string {
 func nlExecInstruction(prompt string, data map[string]any) (string, error) {
 	if data == nil {
 		return fmt.Sprintf(`
-You are executing an LMFunction NLExec call.
+You are executing a ZoaFunction NLExec call.
 
 Task:
 %s
@@ -873,7 +873,7 @@ Return only the final answer text. Do not include markdown fences.
 		return "", fmt.Errorf("marshal NLExec payload: %w", err)
 	}
 	return fmt.Sprintf(`
-You are executing an LMFunction NLExec call.
+You are executing a ZoaFunction NLExec call.
 
 Task:
 %s
@@ -888,7 +888,7 @@ Return only the final answer text. Do not include markdown fences.
 func nlExecTypedInstruction(prompt string, data map[string]any) (string, error) {
 	if data == nil {
 		return fmt.Sprintf(`
-You are executing an LMFunction typed NLExec call.
+You are executing a ZoaFunction typed NLExec call.
 
 Task:
 %s
@@ -903,7 +903,7 @@ No markdown fences. No extra prose.
 		return "", fmt.Errorf("marshal NLExec payload: %w", err)
 	}
 	return fmt.Sprintf(`
-You are executing an LMFunction typed NLExec call.
+You are executing a ZoaFunction typed NLExec call.
 
 Task:
 %s
@@ -922,7 +922,7 @@ func nlConditionInstruction(conditionID string, conditionPrompt string, data map
 		return "", fmt.Errorf("marshal condition payload: %w", err)
 	}
 	return fmt.Sprintf(`
-You are evaluating an LMFunction natural-language condition in isolation.
+You are evaluating a ZoaFunction natural-language condition in isolation.
 
 Condition ID:
 %s

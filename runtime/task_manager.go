@@ -51,7 +51,7 @@ type TaskManagerOptions struct {
 	// When set, TaskManager opens and owns this connection.
 	SQLitePath string
 
-	// UserSQLitePath configures the LMFunction user-state SQLite database path.
+	// UserSQLitePath configures the user-state SQLite database path for hub functions.
 	// Defaults to a sibling state.db next to SQLitePath.
 	UserSQLitePath string
 
@@ -439,7 +439,7 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
 	})
 	defer task.End()
-	semtrace.LogAttrs(runCtx, "lmfunction", "task started", map[string]any{
+	semtrace.LogAttrs(runCtx, "zoafunction", "task started", map[string]any{
 		"task_id":                  taskID,
 		"function_id":              functionID,
 		"hide_by_default":          rec.spawnOptions.HideInLogByDefault,
@@ -447,7 +447,7 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	})
 
 	m.logger.Debug("task started", "task_id", taskID, "function_id", functionID)
-	execCtx, execRegion := semtrace.StartRegionWithAttrs(runCtx, "lmfunction.run", map[string]any{
+	execCtx, execRegion := semtrace.StartRegionWithAttrs(runCtx, "zoafunction.run", map[string]any{
 		"task_id":                  taskID,
 		"function_id":              functionID,
 		"hide_from_log_by_default": rec.spawnOptions.HideInLogByDefault,
@@ -480,12 +480,12 @@ func (m *TaskManager) runTask(fn *Function, rec *taskRecord, input map[string]an
 	}
 	_ = m.persistTask(taskID)
 	if err != nil {
-		semtrace.LogAttrs(runCtx, "lmfunction.error", err.Error(), map[string]any{
+		semtrace.LogAttrs(runCtx, "zoafunction.error", err.Error(), map[string]any{
 			"task_id":     taskID,
 			"function_id": functionID,
 		})
 	}
-	semtrace.LogAttrs(runCtx, "lmfunction", "task finished", map[string]any{
+	semtrace.LogAttrs(runCtx, "zoafunction", "task finished", map[string]any{
 		"task_id":                  taskID,
 		"function_id":              functionID,
 		"status":                   string(status),
@@ -539,7 +539,7 @@ func (m *TaskManager) runFunction(ctx context.Context, parentTaskID string, fn *
 	tcOpts.spawnTask = func(functionID string, input map[string]any, opts SpawnOptions) (string, error) {
 		return m.spawnWithParent(parentTaskID, functionID, input, opts)
 	}
-	tcOpts.lmfTools = m.newLMFunctionTools
+	tcOpts.zoaFunctionTools = m.newZoaFunctionTools
 	tcOpts.loadMixin = m.registry.GetMixin
 	tcOpts.Namespace = namespaceFromFunctionID(fn.ID)
 	tcOpts.conversationDB = m.conversationDB
@@ -630,11 +630,11 @@ func (m *TaskManager) registerPump(pumpID, functionID string, input map[string]a
 	return nil
 }
 
-func (m *TaskManager) newLMFunctionTools() ([]tools.Tool, error) {
+func (m *TaskManager) newZoaFunctionTools() ([]tools.Tool, error) {
 	if m == nil {
 		return nil, fmt.Errorf("task manager is nil")
 	}
-	return newLMFunctionTools(m.registry, m)
+	return newZoaFunctionTools(m.registry, m)
 }
 
 func (m *TaskManager) stopAllPumps() {

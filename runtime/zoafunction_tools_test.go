@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
+func TestSearchZoaFunctionsIncludesSchemas(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegister(&Function{
 		ID:        "test.schemas",
@@ -31,13 +31,13 @@ func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
 		},
 	})
 
-	tool := &searchLMFunctionsTool{registry: registry}
+	tool := &searchZoaFunctionsTool{registry: registry}
 	out, err := tool.Execute(context.Background(), map[string]any{
 		"keywords": []any{"schemas"},
 		"limit":    10,
 	})
 	if err != nil {
-		t.Fatalf("execute search_lmfunctions: %v", err)
+		t.Fatalf("execute search_zoafunctions: %v", err)
 	}
 
 	var payload struct {
@@ -65,7 +65,7 @@ func TestSearchLMFunctionsIncludesSchemas(t *testing.T) {
 	}
 }
 
-func TestSearchLMMixinFindsRegisteredMixin(t *testing.T) {
+func TestSearchZoaMixinFindsRegisteredMixin(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegisterMixin(&Mixin{
 		ID:        "intrinsic.lmfunction_system",
@@ -73,13 +73,13 @@ func TestSearchLMMixinFindsRegisteredMixin(t *testing.T) {
 		Content:   "mixin text",
 	})
 
-	tool := &searchLMMixinsTool{registry: registry}
+	tool := &searchZoaMixinsTool{registry: registry}
 	out, err := tool.Execute(context.Background(), map[string]any{
-		"keywords": []any{"does-not-match", "lmfunction"},
+		"keywords": []any{"does-not-match", "reference"},
 		"limit":    10,
 	})
 	if err != nil {
-		t.Fatalf("execute search_lmmixin: %v", err)
+		t.Fatalf("execute search_zoamixins: %v", err)
 	}
 
 	var payload struct {
@@ -98,7 +98,7 @@ func TestSearchLMMixinFindsRegisteredMixin(t *testing.T) {
 	}
 }
 
-func TestLoadLMMixinLoadsIntoContext(t *testing.T) {
+func TestLoadZoaMixinLoadsIntoContext(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegisterMixin(&Mixin{
 		ID:        "intrinsic.lmfunction_system",
@@ -106,24 +106,24 @@ func TestLoadLMMixinLoadsIntoContext(t *testing.T) {
 		Content:   "mixin text",
 	})
 
-	tool := &loadLMMixinTool{
+	tool := &loadZoaMixinTool{
 		registry: registry,
 	}
 	out, err := tool.Execute(context.Background(), map[string]any{
 		"mixin_id": "intrinsic.lmfunction_system",
 	})
 	if err != nil {
-		t.Fatalf("execute load_lmmixin: %v", err)
+		t.Fatalf("execute load_zoamixin: %v", err)
 	}
 	if out != "mixin text" {
 		t.Fatalf("unexpected mixin output: %q", out)
 	}
 }
 
-func TestCallLMFunctionDoesNotThreadTimeoutSec(t *testing.T) {
+func TestCallZoaFunctionDoesNotThreadTimeoutSec(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegister(&Function{
-		ID:        "test.call_lmfunction_no_timeout_field",
+		ID:        "test.call_zoafunction_no_timeout_field",
 		WhenToUse: "test only",
 		Exec: func(_ *TaskContext, input map[string]any) (map[string]any, error) {
 			_, hasTimeout := input["timeout_sec"]
@@ -140,16 +140,16 @@ func TestCallLMFunctionDoesNotThreadTimeoutSec(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	tool := &callLMFunctionTool{manager: manager}
+	tool := &callZoaFunctionTool{manager: manager}
 	out, err := tool.Execute(context.Background(), map[string]any{
-		"function_id": "test.call_lmfunction_no_timeout_field",
+		"function_id": "test.call_zoafunction_no_timeout_field",
 		"input": map[string]any{
 			"foo": "bar",
 		},
 		"timeout_sec": 1,
 	})
 	if err != nil {
-		t.Fatalf("execute call_lmfunction: %v", err)
+		t.Fatalf("execute call_zoafunction: %v", err)
 	}
 
 	var payload struct {
@@ -177,25 +177,25 @@ func TestCallLMFunctionDoesNotThreadTimeoutSec(t *testing.T) {
 	}
 }
 
-func TestCallLMFunctionSpecGuidesWaitAndKillAndOmitsTimeoutField(t *testing.T) {
-	tool := &callLMFunctionTool{}
+func TestCallZoaFunctionSpecGuidesWaitAndKillAndOmitsTimeoutField(t *testing.T) {
+	tool := &callZoaFunctionTool{}
 	spec := tool.Spec()
-	if !strings.Contains(spec.Description, "wait_lmfunction") {
-		t.Fatalf("call_lmfunction description should mention wait_lmfunction: %q", spec.Description)
+	if !strings.Contains(spec.Description, "wait_zoafunction") {
+		t.Fatalf("call_zoafunction description should mention wait_zoafunction: %q", spec.Description)
 	}
-	if !strings.Contains(spec.Description, "kill_lmfunction") {
-		t.Fatalf("call_lmfunction description should mention kill_lmfunction: %q", spec.Description)
+	if !strings.Contains(spec.Description, "kill_zoafunction") {
+		t.Fatalf("call_zoafunction description should mention kill_zoafunction: %q", spec.Description)
 	}
 	props, _ := spec.Schema["properties"].(map[string]any)
 	if _, ok := props["timeout_sec"]; ok {
-		t.Fatalf("call_lmfunction schema should not expose timeout_sec")
+		t.Fatalf("call_zoafunction schema should not expose timeout_sec")
 	}
 }
 
-func TestKillLMFunctionCancelsRunningTask(t *testing.T) {
+func TestKillZoaFunctionCancelsRunningTask(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegister(&Function{
-		ID:        "test.kill_lmfunction.cancel",
+		ID:        "test.kill_zoafunction.cancel",
 		WhenToUse: "test only",
 		Exec: func(tc *TaskContext, _ map[string]any) (map[string]any, error) {
 			<-tc.Context().Done()
@@ -210,12 +210,12 @@ func TestKillLMFunctionCancelsRunningTask(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	callTool := &callLMFunctionTool{manager: manager}
+	callTool := &callZoaFunctionTool{manager: manager}
 	callOut, err := callTool.Execute(context.Background(), map[string]any{
-		"function_id": "test.kill_lmfunction.cancel",
+		"function_id": "test.kill_zoafunction.cancel",
 	})
 	if err != nil {
-		t.Fatalf("execute call_lmfunction: %v", err)
+		t.Fatalf("execute call_zoafunction: %v", err)
 	}
 	var callPayload struct {
 		TaskID string `json:"task_id"`
@@ -227,12 +227,12 @@ func TestKillLMFunctionCancelsRunningTask(t *testing.T) {
 		t.Fatalf("missing task_id in call payload: %s", callOut)
 	}
 
-	killTool := &killLMFunctionTool{manager: manager}
+	killTool := &killZoaFunctionTool{manager: manager}
 	killOut, err := killTool.Execute(context.Background(), map[string]any{
 		"task_id": callPayload.TaskID,
 	})
 	if err != nil {
-		t.Fatalf("execute kill_lmfunction: %v", err)
+		t.Fatalf("execute kill_zoafunction: %v", err)
 	}
 	var killPayload struct {
 		CancelRequested bool `json:"cancel_requested"`
@@ -263,11 +263,11 @@ func TestKillLMFunctionCancelsRunningTask(t *testing.T) {
 	}
 }
 
-func TestWaitLMFunctionSpecMentionsKillOnTimeout(t *testing.T) {
-	tool := &waitLMFunctionTool{}
+func TestWaitZoaFunctionSpecMentionsKillOnTimeout(t *testing.T) {
+	tool := &waitZoaFunctionTool{}
 	spec := tool.Spec()
-	if !strings.Contains(spec.Description, "kill_lmfunction") {
-		t.Fatalf("wait_lmfunction description should mention kill_lmfunction: %q", spec.Description)
+	if !strings.Contains(spec.Description, "kill_zoafunction") {
+		t.Fatalf("wait_zoafunction description should mention kill_zoafunction: %q", spec.Description)
 	}
 	props, _ := spec.Schema["properties"].(map[string]any)
 	timeoutProp, _ := props["timeout_sec"].(map[string]any)

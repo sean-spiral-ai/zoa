@@ -12,7 +12,7 @@ import (
 	tools "zoa/tools"
 )
 
-func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]tools.Tool, error) {
+func newZoaFunctionTools(registry *Registry, manager *TaskManager) ([]tools.Tool, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("registry is nil")
 	}
@@ -20,23 +20,23 @@ func newLMFunctionTools(registry *Registry, manager *TaskManager) ([]tools.Tool,
 		return nil, fmt.Errorf("task manager is nil")
 	}
 	return []tools.Tool{
-		&searchLMFunctionsTool{registry: registry},
-		&searchLMMixinsTool{registry: registry},
-		&loadLMMixinTool{registry: registry},
-		&callLMFunctionTool{manager: manager},
-		&waitLMFunctionTool{manager: manager},
-		&killLMFunctionTool{manager: manager},
+		&searchZoaFunctionsTool{registry: registry},
+		&searchZoaMixinsTool{registry: registry},
+		&loadZoaMixinTool{registry: registry},
+		&callZoaFunctionTool{manager: manager},
+		&waitZoaFunctionTool{manager: manager},
+		&killZoaFunctionTool{manager: manager},
 	}, nil
 }
 
-type searchLMFunctionsTool struct {
+type searchZoaFunctionsTool struct {
 	registry *Registry
 }
 
-func (t *searchLMFunctionsTool) Spec() llm.ToolSpec {
+func (t *searchZoaFunctionsTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "search_lmfunctions",
-		Description: "Search registered LM Functions by keywords against id and when_to_use guidance (any keyword may match).",
+		Name:        "search_zoafunctions",
+		Description: "Search registered ZoaFunctions by keywords against id and when_to_use guidance (any keyword may match).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -54,7 +54,7 @@ func (t *searchLMFunctionsTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *searchLMFunctionsTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *searchZoaFunctionsTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	keywords, err := keywordListArg(args, "keywords")
 	if err != nil {
 		return "", err
@@ -109,18 +109,18 @@ func (t *searchLMFunctionsTool) Execute(_ context.Context, args map[string]any) 
 	return string(payload), nil
 }
 
-type callLMFunctionTool struct {
+type callZoaFunctionTool struct {
 	manager *TaskManager
 }
 
-type searchLMMixinsTool struct {
+type searchZoaMixinsTool struct {
 	registry *Registry
 }
 
-func (t *searchLMMixinsTool) Spec() llm.ToolSpec {
+func (t *searchZoaMixinsTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "search_lmmixin",
-		Description: "Search registered LM Mixins by keywords against id and when_to_use guidance (any keyword may match).",
+		Name:        "search_zoamixins",
+		Description: "Search registered ZoaMixins by keywords against id and when_to_use guidance (any keyword may match).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -138,7 +138,7 @@ func (t *searchLMMixinsTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *searchLMMixinsTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *searchZoaMixinsTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	keywords, err := keywordListArg(args, "keywords")
 	if err != nil {
 		return "", err
@@ -189,25 +189,25 @@ func (t *searchLMMixinsTool) Execute(_ context.Context, args map[string]any) (st
 	return string(payload), nil
 }
 
-type loadLMMixinTool struct {
+type loadZoaMixinTool struct {
 	registry *Registry
 }
 
-func (t *loadLMMixinTool) Spec() llm.ToolSpec {
+func (t *loadZoaMixinTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "load_lmmixin",
-		Description: "Load a registered LM Mixin by id and return its raw content string.",
+		Name:        "load_zoamixin",
+		Description: "Load a registered ZoaMixin by id and return its raw content string.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"mixin_id": map[string]any{"type": "string", "description": "LM Mixin id"},
+				"mixin_id": map[string]any{"type": "string", "description": "ZoaMixin id"},
 			},
 			"required": []string{"mixin_id"},
 		},
 	}
 }
 
-func (t *loadLMMixinTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *loadZoaMixinTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	mixinID, err := tools.StringArg(args, "mixin_id", true)
 	if err != nil {
 		return "", err
@@ -220,14 +220,14 @@ func (t *loadLMMixinTool) Execute(_ context.Context, args map[string]any) (strin
 	return mixin.Content, nil
 }
 
-func (t *callLMFunctionTool) Spec() llm.ToolSpec {
+func (t *callZoaFunctionTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "call_lmfunction",
-		Description: "Start an LM Function task asynchronously and return a task_id handle. For long-running tasks, use wait_lmfunction with a timeout and call kill_lmfunction if you need to cancel.",
+		Name:        "call_zoafunction",
+		Description: "Start a ZoaFunction task asynchronously and return a task_id handle. For long-running tasks, use wait_zoafunction with a timeout and call kill_zoafunction if you need to cancel.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"function_id": map[string]any{"type": "string", "description": "LM Function id"},
+				"function_id": map[string]any{"type": "string", "description": "ZoaFunction id"},
 				"input":       map[string]any{"type": "object", "description": "Optional function input object"},
 			},
 			"required": []string{"function_id"},
@@ -235,7 +235,7 @@ func (t *callLMFunctionTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *callZoaFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	functionID, err := tools.StringArg(args, "function_id", true)
 	if err != nil {
 		return "", err
@@ -265,18 +265,18 @@ func (t *callLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 	return string(payload), nil
 }
 
-type waitLMFunctionTool struct {
+type waitZoaFunctionTool struct {
 	manager *TaskManager
 }
 
-func (t *waitLMFunctionTool) Spec() llm.ToolSpec {
+func (t *waitZoaFunctionTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "wait_lmfunction",
-		Description: "Wait for an LM Function task by task_id. If timeout is reached, the task keeps running; call wait_lmfunction again for long-running work or use kill_lmfunction to cancel.",
+		Name:        "wait_zoafunction",
+		Description: "Wait for a ZoaFunction task by task_id. If timeout is reached, the task keeps running; call wait_zoafunction again for long-running work or use kill_zoafunction to cancel.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"task_id":     map[string]any{"type": "string", "description": "Task handle returned by call_lmfunction"},
+				"task_id":     map[string]any{"type": "string", "description": "Task handle returned by call_zoafunction"},
 				"timeout_sec": map[string]any{"type": "integer", "description": "Optional wait timeout in seconds. If exceeded, timed_out=true and task continues running."},
 			},
 			"required": []string{"task_id"},
@@ -284,7 +284,7 @@ func (t *waitLMFunctionTool) Spec() llm.ToolSpec {
 	}
 }
 
-func (t *waitLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *waitZoaFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	taskID, err := tools.StringArg(args, "task_id", true)
 	if err != nil {
 		return "", err
@@ -311,25 +311,25 @@ func (t *waitLMFunctionTool) Execute(_ context.Context, args map[string]any) (st
 	return string(b), nil
 }
 
-type killLMFunctionTool struct {
+type killZoaFunctionTool struct {
 	manager *TaskManager
 }
 
-func (t *killLMFunctionTool) Spec() llm.ToolSpec {
+func (t *killZoaFunctionTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "kill_lmfunction",
-		Description: "Cancel a running LM Function task by task_id.",
+		Name:        "kill_zoafunction",
+		Description: "Cancel a running ZoaFunction task by task_id.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"task_id": map[string]any{"type": "string", "description": "Task handle returned by call_lmfunction"},
+				"task_id": map[string]any{"type": "string", "description": "Task handle returned by call_zoafunction"},
 			},
 			"required": []string{"task_id"},
 		},
 	}
 }
 
-func (t *killLMFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
+func (t *killZoaFunctionTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	taskID, err := tools.StringArg(args, "task_id", true)
 	if err != nil {
 		return "", err
