@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	baselineagent "zoa/baselineagent"
+	modelpkg "zoa/model"
 	"zoa/runtime"
 )
 
@@ -179,16 +179,16 @@ func TestTypedNLExecEcho(t *testing.T) {
 
 func requireModel(t *testing.T) string {
 	t.Helper()
-	if _, ok := baselineagent.ResolveCredential("", baselineagent.DefaultGeminiModel); ok {
-		return baselineagent.DefaultGeminiModel
+	if _, ok := modelpkg.ResolveCredential("", modelpkg.DefaultGeminiModel); ok {
+		return modelpkg.DefaultGeminiModel
 	}
-	if _, ok := baselineagent.ResolveCredential("", baselineagent.DefaultAnthropicModel); ok {
-		return baselineagent.DefaultAnthropicModel
+	if _, ok := modelpkg.ResolveCredential("", modelpkg.DefaultAnthropicModel); ok {
+		return modelpkg.DefaultAnthropicModel
 	}
 	t.Fatalf(
 		"%s or %s is required to run LLM-backed tests",
-		baselineagent.GeminiAPIKeyEnvVar,
-		baselineagent.AnthropicOAuthTokenEnvVar,
+		modelpkg.GeminiAPIKeyEnvVar,
+		modelpkg.AnthropicOAuthTokenEnvVar,
 	)
 	return ""
 }

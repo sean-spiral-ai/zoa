@@ -2,44 +2,16 @@ package runtime
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
-	baselineagent "zoa/baselineagent"
 	"zoa/llm"
 )
 
-type stubConversation struct {
-	history []llm.Message
-}
-
-func (s *stubConversation) Prompt(_ context.Context, _ string) (baselineagent.RunResult, error) {
-	return baselineagent.RunResult{}, nil
-}
-
-func (s *stubConversation) PromptStructured(_ context.Context, _ string, _ llm.StructuredResponseFormat) (baselineagent.RunResult, error) {
-	return baselineagent.RunResult{}, nil
-}
-
-func (s *stubConversation) AppendMessages(messages []llm.Message) error {
-	s.history = append(s.history, messages...)
-	return nil
-}
-
-func (s *stubConversation) Fork() baselineagent.Conversation {
-	out := &stubConversation{
-		history: append([]llm.Message(nil), s.history...),
-	}
-	return out
-}
-
-func (s *stubConversation) History() []llm.Message {
-	return append([]llm.Message(nil), s.history...)
-}
-
 func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
-	conv := &stubConversation{}
-	tc := &TaskContext{
-		mainConv: conv,
+	tc, err := NewTaskContext(context.Background(), TaskContextOptions{
+		CWD:        t.TempDir(),
+		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 		loadMixin: func(id string) (*Mixin, bool) {
 			if id != "intrinsic.lmfunction_system" {
 				return nil, false
@@ -50,7 +22,11 @@ func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
 				Content:   "important reference context",
 			}, true
 		},
+	})
+	if err != nil {
+		t.Fatalf("new task context: %v", err)
 	}
+	defer func() { _ = tc.Close() }()
 
 	if err := tc.LoadMixin("intrinsic.lmfunction_system"); err != nil {
 		t.Fatalf("load mixin first: %v", err)
@@ -58,10 +34,11 @@ func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
 	if err := tc.LoadMixin("intrinsic.lmfunction_system"); err != nil {
 		t.Fatalf("load mixin second: %v", err)
 	}
-	if len(conv.history) != 2 {
-		t.Fatalf("expected 2 appended messages, got %d", len(conv.history))
+	history := tc.conversationHistory()
+	if len(history) != 3 {
+		t.Fatalf("expected 3 messages including system prompt, got %d", len(history))
 	}
-	for i, msg := range conv.history {
+	for i, msg := range history[1:] {
 		if msg.Role != llm.RoleUser {
 			t.Fatalf("message[%d] role=%s, want user", i, msg.Role)
 		}

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	baselineagent "zoa/baselineagent"
 	convdb "zoa/conversation/db"
 	convrunner "zoa/conversation/runner"
 	"zoa/internal/llmtrace"
@@ -23,6 +22,15 @@ import (
 
 const defaultConversationSystemPrompt = `You are a reliable assistant.
 Use tools when needed, do not invent results, and keep responses concise.`
+
+type taskConversationConfig struct {
+	Model        string
+	MaxTurns     int
+	Timeout      time.Duration
+	Temperature  float64
+	SystemPrompt string
+	Tools        []tools.Tool
+}
 
 type TaskContextOptions struct {
 	APIKey      string
@@ -49,8 +57,7 @@ type TaskContext struct {
 	ctx                context.Context
 	logger             *slog.Logger
 	apiKey             string
-	baseConfig         baselineagent.ConversationConfig
-	mainConv           baselineagent.Conversation
+	baseConfig         taskConversationConfig
 	conversationDB     *convdb.DB
 	ownsConversationDB bool
 	sqlDB              sqlExecutor
@@ -106,8 +113,7 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		return nil, fmt.Errorf("unsupported model %q (supported: %s)", model, strings.Join(modelpkg.SupportedModelNames(), ", "))
 	}
 
-	baseConfig := baselineagent.ConversationConfig{
-		CWD:         absCWD,
+	baseConfig := taskConversationConfig{
 		Model:       model,
 		MaxTurns:    opts.MaxTurns,
 		Timeout:     opts.Timeout,
@@ -140,7 +146,6 @@ func NewTaskContext(ctx context.Context, opts TaskContextOptions) (*TaskContext,
 		logger:        tcLogger,
 		apiKey:        apiKey,
 		baseConfig:    baseConfig,
-		mainConv:      nil,
 		sqlDB:         sqlDB,
 		ownsSQL:       ownsSQL,
 		namespace:     opts.Namespace,
@@ -385,12 +390,6 @@ func (t *TaskContext) LoadMixin(id string) error {
 	if err := t.ensureMainConversation(); err != nil {
 		return err
 	}
-	if t.mainConv != nil {
-		return t.mainConv.AppendMessages([]llm.Message{{
-			Role: llm.RoleUser,
-			Text: strings.TrimSpace(mixin.Content),
-		}})
-	}
 	if err := t.appendToMainRef(llm.Message{
 		Role: llm.RoleUser,
 		Text: strings.TrimSpace(mixin.Content),
@@ -522,9 +521,6 @@ func (t *TaskContext) NLCondition(conditionID string, conditionPrompt string, da
 }
 
 func (t *TaskContext) ensureMainConversation() error {
-	if t.mainConv != nil {
-		return nil
-	}
 	db, err := t.ConversationDB()
 	if err != nil {
 		return err
@@ -546,7 +542,7 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 	if !ok {
 		envVar := modelpkg.RequiredCredentialEnvVarForModel(t.baseConfig.Model)
 		return "", fmt.Errorf(
-			"%s is required for baselineagent backed operations",
+			"%s is required for conversation-backed operations",
 			envVar,
 		)
 	}
@@ -555,9 +551,6 @@ func (t *TaskContext) resolveAPIKey() (string, error) {
 }
 
 func (t *TaskContext) conversationHistory() []llm.Message {
-	if t.mainConv != nil {
-		return t.mainConv.History()
-	}
 	db, err := t.ConversationDB()
 	if err != nil {
 		return []llm.Message{}
