@@ -2,7 +2,7 @@ package intrinsic
 
 import "zoa/runtime"
 
-const lmFunctionSystemMixinContent = `ZoaFunction system context:
+const zoaSystemMixinContent = `ZoaFunction system context:
 - ZoaFunctions are reusable workflows executed by the Zoa runtime.
 - ZoaMixins are reusable context snippets that can be loaded into the context window for future NL execution.
 - They can combine programmatic execution (Go code) and natural-language/agentic execution (TaskContext NLExec/NLCondition).
@@ -62,10 +62,10 @@ Execution requirements:
 - Run targeted validation commands (at least relevant go test packages).
 `
 
-func lmFunctionSystemMixin() *runtime.Mixin {
+func zoaSystemMixin() *runtime.Mixin {
 	return &runtime.Mixin{
-		ID:        "intrinsic.lmfunction_system",
-		WhenToUse: "Use when you need authoritative context about LM Function architecture, LM Mixins, conventions, and TaskContext APIs while designing or editing LM Functions.",
-		Content:   lmFunctionSystemMixinContent,
+		ID:        "intrinsic.zoa_system",
+		WhenToUse: "Use when you need authoritative context about ZoaFunction architecture, ZoaMixins, hub layout, conventions, and TaskContext APIs while designing or editing ZoaFunctions.",
+		Content:   zoaSystemMixinContent,
 	}
 }

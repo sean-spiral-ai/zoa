@@ -68,7 +68,7 @@ func TestSearchZoaFunctionsIncludesSchemas(t *testing.T) {
 func TestSearchZoaMixinFindsRegisteredMixin(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegisterMixin(&Mixin{
-		ID:        "intrinsic.lmfunction_system",
+		ID:        "intrinsic.zoa_system",
 		WhenToUse: "reference context",
 		Content:   "mixin text",
 	})
@@ -93,7 +93,7 @@ func TestSearchZoaMixinFindsRegisteredMixin(t *testing.T) {
 	if len(payload.Matches) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(payload.Matches))
 	}
-	if payload.Matches[0].ID != "intrinsic.lmfunction_system" {
+	if payload.Matches[0].ID != "intrinsic.zoa_system" {
 		t.Fatalf("unexpected match id: %q", payload.Matches[0].ID)
 	}
 }
@@ -101,7 +101,7 @@ func TestSearchZoaMixinFindsRegisteredMixin(t *testing.T) {
 func TestLoadZoaMixinLoadsIntoContext(t *testing.T) {
 	registry := NewRegistry()
 	registry.MustRegisterMixin(&Mixin{
-		ID:        "intrinsic.lmfunction_system",
+		ID:        "intrinsic.zoa_system",
 		WhenToUse: "reference context",
 		Content:   "mixin text",
 	})
@@ -110,7 +110,7 @@ func TestLoadZoaMixinLoadsIntoContext(t *testing.T) {
 		registry: registry,
 	}
 	out, err := tool.Execute(context.Background(), map[string]any{
-		"mixin_id": "intrinsic.lmfunction_system",
+		"mixin_id": "intrinsic.zoa_system",
 	})
 	if err != nil {
 		t.Fatalf("execute load_zoamixin: %v", err)

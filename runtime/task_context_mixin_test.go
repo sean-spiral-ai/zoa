@@ -13,7 +13,7 @@ func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
 		CWD:        t.TempDir(),
 		SQLitePath: filepath.Join(t.TempDir(), "state.db"),
 		loadMixin: func(id string) (*Mixin, bool) {
-			if id != "intrinsic.lmfunction_system" {
+			if id != "intrinsic.zoa_system" {
 				return nil, false
 			}
 			return &Mixin{
@@ -28,10 +28,10 @@ func TestTaskContextLoadMixinAppendsImmediately(t *testing.T) {
 	}
 	defer func() { _ = tc.Close() }()
 
-	if err := tc.LoadMixin("intrinsic.lmfunction_system"); err != nil {
+	if err := tc.LoadMixin("intrinsic.zoa_system"); err != nil {
 		t.Fatalf("load mixin first: %v", err)
 	}
-	if err := tc.LoadMixin("intrinsic.lmfunction_system"); err != nil {
+	if err := tc.LoadMixin("intrinsic.zoa_system"); err != nil {
 		t.Fatalf("load mixin second: %v", err)
 	}
 	history := tc.conversationHistory()

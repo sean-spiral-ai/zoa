@@ -1,66 +1,44 @@
 # zoa
 
-Zoa is an LM-function runtime with a persistent gateway, a conversation store, and a library of LM functions in [`lmflib/`](/home/albion/pg/zoa/lmflib).
-
-## Architecture
-
-Persistent state is intentionally split into three layers:
-
-1. `conversation.db`
-   Stores only conversation state from [`conversation/db/`](/home/albion/pg/zoa/conversation/db): immutable `conversation_node` rows and mutable `conversation_ref` rows. Gateway chat sessions and runtime `NLExec`/`NLCondition` flows use this DB.
-
-2. `runtime.db`
-   Stores runtime-owned execution state from [`runtime/`](/home/albion/pg/zoa/runtime), primarily `runtime__task_log` and related orchestration metadata. Runtime state may point into conversation refs or hashes, but it should not own full transcripts.
-
-3. `state.db`
-   Stores LMFunction or application "user state". This is the DB reached by `TaskContext.SqlExec`, `TaskContext.SqlQuery`, and `TaskContext.SqlTx`. Tables under [`lmflib/`](/home/albion/pg/zoa/lmflib) such as gateway inbound/outbox state belong here.
-
-The intended ownership boundary is:
-
-- [`conversation/`](/home/albion/pg/zoa/conversation) owns conversational history and branching.
-- [`runtime/`](/home/albion/pg/zoa/runtime) owns task execution, scheduling, and logs.
-- [`lmflib/`](/home/albion/pg/zoa/lmflib) owns domain or user-facing state.
+Zoa is a runtime for persistent AI-driven software systems, with durable conversations, task execution, and a monorepo `hub/` that stands in for a future ZoaHub.
 
 ## Layout
 
 - [`conversation/`](/home/albion/pg/zoa/conversation): conversation DB, runner, and viewer server
-- [`runtime/`](/home/albion/pg/zoa/runtime): task runtime, task logs, LMFunction tools
-- [`lmflib/`](/home/albion/pg/zoa/lmflib): LMFunction library
-- [`cmd/zoa/`](/home/albion/pg/zoa/cmd/zoa): CLI entrypoints
-- [`internal/slack/`](/home/albion/pg/zoa/internal/slack): Slack bridge
-- [`internal/daemon/`](/home/albion/pg/zoa/internal/daemon): daemon management
+- [`runtime/`](/home/albion/pg/zoa/runtime): task runtime, task logs, and model-facing ZoaFunction/ZoaMixin tools
+- [`hub/`](/home/albion/pg/zoa/hub): monorepo package directory
 
-## Gateway Session Files
+Within `hub/`, the source layout is `hub/<package>/<module>/`.
+In prose these correspond to ZoaPackage and ZoaModule. Runtime IDs stay `module.name`; package is only a source-management grouping.
 
-A gateway session directory such as `.gateway/sessions/default/` now contains:
+Current examples:
+- [`hub/core/intrinsic/`](/home/albion/pg/zoa/hub/core/intrinsic)
+- [`hub/util/gateway/`](/home/albion/pg/zoa/hub/util/gateway)
+- [`hub/util/diverse_ideation/`](/home/albion/pg/zoa/hub/util/diverse_ideation)
+- [`hub/util/md_to_pdf/`](/home/albion/pg/zoa/hub/util/md_to_pdf)
 
-- `conversation.db`: conversation refs and nodes
-- `runtime.db`: runtime task logs and runtime-owned metadata
-- `state.db`: gateway/user-state tables such as `gateway__inbound` and `gateway__outbox`
+## State
+
+Persistent state is split into three SQLite files:
+
+1. `conversation.db`
+   Conversation history only: immutable `conversation_node` rows plus mutable `conversation_ref` heads.
+2. `runtime.db`
+   Runtime-owned execution state such as `runtime__task_log`.
+3. `state.db`
+   User or hub-module state exposed through `TaskContext.SqlExec`, `TaskContext.SqlQuery`, and `TaskContext.SqlTx`.
+
+That boundary is intentional:
+- [`conversation/`](/home/albion/pg/zoa/conversation) owns transcripts and branching.
+- [`runtime/`](/home/albion/pg/zoa/runtime) owns orchestration and task lifecycle.
+- [`hub/`](/home/albion/pg/zoa/hub) owns module state.
 
 ## Commands
 
-Run tests:
-
 ```bash
 go test ./...
-```
-
-Run the TUI gateway:
-
-```bash
 go run ./cmd/zoa -- tui --cwd /absolute/workspace/path --session-dir .gateway/sessions/default
-```
-
-Inspect user state:
-
-```bash
 go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default
-```
-
-Inspect a conversation transcript:
-
-```bash
 go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default conversation
 ```
 
@@ -68,4 +46,4 @@ go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default conversation
 
 - Set `GEMINI_API_KEY` for Gemini models.
 - Set `ANTHROPIC_OAUTH_TOKEN` for Anthropic models.
-- `call_lmfunction` is asynchronous by design. If the model needs the result, it must call `wait_lmfunction`.
+- `call_zoafunction` is asynchronous by design. If the model needs the result, it must call `wait_zoafunction`.
