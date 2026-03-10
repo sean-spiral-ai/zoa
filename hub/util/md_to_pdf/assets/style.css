@@ -1,0 +1,122 @@
+/* md-to-pdf default stylesheet */
+@page {
+  size: A4;
+  margin: 2cm 2.5cm;
+}
+
+body {
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #1a1a1a;
+  max-width: 100%;
+}
+
+h1 {
+  font-size: 26px;
+  border-bottom: 3px solid #1a1a1a;
+  padding-bottom: 8px;
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 20px;
+  color: #2c3e50;
+  margin-top: 28px;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 4px;
+}
+
+h3 {
+  font-size: 16px;
+  color: #34495e;
+  margin-top: 20px;
+}
+
+h4 {
+  font-size: 14px;
+  color: #555;
+  margin-top: 16px;
+}
+
+p { margin: 8px 0; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+th {
+  background: #f0f0f0;
+  font-weight: 600;
+}
+
+tr:nth-child(even) { background: #fafafa; }
+
+ul, ol { margin: 8px 0; padding-left: 24px; }
+li { margin: 4px 0; }
+
+code {
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  background: #f4f4f4;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+pre {
+  background: #f4f4f4;
+  padding: 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+blockquote {
+  border-left: 3px solid #2c3e50;
+  margin: 12px 0;
+  padding: 8px 16px;
+  background: #f9f9f9;
+  color: #333;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 24px 0;
+}
+
+a { color: #2c3e50; text-decoration: none; }
+
+img { max-width: 100%; }
+
+strong { color: #1a1a1a; }
+
+em { color: #333; }
+
+.header-meta {
+  color: #666;
+  font-size: 13px;
+  margin-bottom: 24px;
+}
+
+.callout {
+  padding: 12px;
+  background: #f0f0f0;
+  border-left: 4px solid #2c3e50;
+  margin: 16px 0;
+}

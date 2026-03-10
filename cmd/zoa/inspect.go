@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"zoa/llm"
-	gatewaylmf "zoa/lmflib/gateway"
+	gatewaylmf "zoa/hub/util/gateway"
 
 	_ "modernc.org/sqlite"
 )

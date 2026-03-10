@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	diverseideation "zoa/lmflib/diverse_ideation"
-	gatewaylmf "zoa/lmflib/gateway"
-	"zoa/lmflib/intrinsic"
-	mdtopdf "zoa/lmflib/md_to_pdf"
+	"zoa/hub/core/intrinsic"
+	diverseideation "zoa/hub/util/diverse_ideation"
+	gatewaylmf "zoa/hub/util/gateway"
+	mdtopdf "zoa/hub/util/md_to_pdf"
 	modelpkg "zoa/model"
 	"zoa/runtime"
 )
