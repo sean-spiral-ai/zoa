@@ -190,3 +190,123 @@ func TestLiveSmokeAnthropic(t *testing.T) {
 		t.Fatalf("anthropic returned empty response")
 	}
 }
+
+func TestLiveAnthropicToolCallRoundTripPreservesInput(t *testing.T) {
+	token := requireLiveProviderToken(t, "ANTHROPIC_OAUTH_TOKEN")
+
+	client := NewAnthropicClientWithOAuthToken(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	resp, err := client.Complete(ctx, CompletionRequest{
+		Model: "claude-opus-4-6",
+		Messages: []Message{{
+			Role: RoleUser,
+			Text: "Call the tool `echo_required` exactly once with JSON input {\"value\":\"hello\"}. Do not say anything else.",
+		}},
+		Tools: []ToolSpec{{
+			Name:        "echo_required",
+			Description: "Test tool that requires a single string field named value.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"value": map[string]any{
+						"type":        "string",
+						"description": "Required string value.",
+					},
+				},
+				"required": []string{"value"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("anthropic first round-trip call failed: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("expected exactly 1 tool call, got %d: %#v", len(resp.ToolCalls), resp.ToolCalls)
+	}
+	call := resp.ToolCalls[0]
+	if call.Name != "echo_required" {
+		t.Fatalf("expected tool name %q, got %q", "echo_required", call.Name)
+	}
+	value, ok := call.Args["value"].(string)
+	if !ok {
+		t.Fatalf("expected string tool arg value, got %#v", call.Args["value"])
+	}
+	if value != "hello" {
+		t.Fatalf("expected tool arg value %q, got %q", "hello", value)
+	}
+
+	followupReq := CompletionRequest{
+		Model: "claude-opus-4-6",
+		Messages: []Message{
+			{
+				Role: RoleUser,
+				Text: "Call the tool `echo_required` exactly once with JSON input {\"value\":\"hello\"}. Do not say anything else.",
+			},
+			{
+				Role:      RoleAssistant,
+				Parts:     []AssistantPart{{ToolCall: &call}},
+				ToolCalls: []ToolCall{call},
+			},
+			{
+				Role: RoleTool,
+				ToolResults: []ToolResult{{
+					CallID: call.ID,
+					Name:   call.Name,
+					Output: `{"ok":true}`,
+				}},
+			},
+		},
+		Tools: []ToolSpec{{
+			Name:        "echo_required",
+			Description: "Test tool that requires a single string field named value.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"value": map[string]any{
+						"type":        "string",
+						"description": "Required string value.",
+					},
+				},
+				"required": []string{"value"},
+			},
+		}},
+	}
+
+	payload, err := buildAnthropicMessagesRequest(followupReq)
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest follow-up returned error: %v", err)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal follow-up returned error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal follow-up returned error: %v", err)
+	}
+	messages, ok := decoded["messages"].([]any)
+	if !ok || len(messages) != 3 {
+		t.Fatalf("expected 3 follow-up messages, got %#v", decoded["messages"])
+	}
+	assistantMessage, ok := messages[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected assistant message object, got %#v", messages[1])
+	}
+	content, ok := assistantMessage["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected 1 assistant content part, got %#v", assistantMessage["content"])
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected assistant content object, got %#v", content[0])
+	}
+	input, ok := part["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected follow-up tool_use input object, got %#v", part["input"])
+	}
+	if got, ok := input["value"].(string); !ok || got != "hello" {
+		t.Fatalf("expected follow-up tool_use input value %q, got %#v", "hello", input["value"])
+	}
+}

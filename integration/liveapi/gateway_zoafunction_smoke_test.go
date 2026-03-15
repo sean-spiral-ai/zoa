@@ -145,6 +145,96 @@ Do not include any intro or outro text.
 	}
 }
 
+func TestGatewaySmokeExploresWorkspaceAndFindsSpecialNumber(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live smoke test in -short mode")
+	}
+
+	modelName := requireLiveModel(t)
+	sessionDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(workspaceDir, "notes", "archive"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspaceDir, "src"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace src: %v", err)
+	}
+	files := map[string]string{
+		filepath.Join(workspaceDir, "README.md"): `This directory contains assorted project scraps.
+Nothing in this file is the answer.`,
+		filepath.Join(workspaceDir, "notes", "archive", "old.txt"): `Historical values:
+12345
+99887766
+No special number here.`,
+		filepath.Join(workspaceDir, "src", "config.txt"): `alpha=1
+beta=2
+marker=The special number is 67432767432
+gamma=3`,
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	client, err := gatewayclient.NewLocalGatewayClient(gatewayclient.LocalConfig{
+		Session:     gatewayclient.DefaultSession,
+		SessionDir:  sessionDir,
+		CWD:         workspaceDir,
+		Model:       modelName,
+		MaxTurns:    24,
+		Temperature: 0.2,
+		TimeoutSec:  180,
+	})
+	if err != nil {
+		t.Fatalf("new local gateway client: %v", err)
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	prompt := strings.TrimSpace(`
+Explore the current workspace directory and find the special number hidden in one of the files.
+
+Return only the number.
+Do not include any other words or punctuation.
+`)
+
+	enqueue, err := client.Enqueue(prompt, "gatewaychannel://test")
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if !enqueue.Accepted {
+		t.Fatalf("enqueue not accepted: %+v", enqueue)
+	}
+
+	reply := waitForOutboxReply(t, client, enqueue.InboundID, 2*time.Minute)
+	if got := strings.TrimSpace(reply.Text); got != "67432767432" {
+		t.Fatalf("reply = %q, want %q", got, "67432767432")
+	}
+
+	db, err := convdb.Open(filepath.Join(sessionDir, "conversation.db"))
+	if err != nil {
+		t.Fatalf("open conversation db: %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	sessionRef, err := db.GetRef("sessions/" + client.Session())
+	if err != nil {
+		t.Fatalf("get session ref: %v", err)
+	}
+	sessionChain, err := db.LoadChain(sessionRef.Hash)
+	if err != nil {
+		t.Fatalf("load session chain: %v", err)
+	}
+	if !chainHasAnyToolCall(sessionChain) {
+		t.Fatalf("session chain missing tool calls; expected workspace exploration")
+	}
+}
+
 func requireLiveModel(t *testing.T) string {
 	t.Helper()
 
@@ -232,6 +322,20 @@ func chainHasToolResult(chain []convdb.Node, toolName string) bool {
 		}
 		if node.Message.Role == llm.RoleTool && strings.Contains(node.Message.Text, toolName) {
 			return true
+		}
+	}
+	return false
+}
+
+func chainHasAnyToolCall(chain []convdb.Node) bool {
+	for _, node := range chain {
+		if len(node.Message.ToolCalls) > 0 {
+			return true
+		}
+		for _, part := range node.Message.Parts {
+			if part.ToolCall != nil {
+				return true
+			}
 		}
 	}
 	return false

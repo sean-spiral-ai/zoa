@@ -107,6 +107,32 @@ func (p anthropicContentPart) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+func (p *anthropicContentPart) UnmarshalJSON(data []byte) error {
+	type anthropicContentPartJSON struct {
+		Type      string         `json:"type"`
+		Text      string         `json:"text,omitempty"`
+		ID        string         `json:"id,omitempty"`
+		Name      string         `json:"name,omitempty"`
+		Input     map[string]any `json:"input,omitempty"`
+		ToolUseID string         `json:"tool_use_id,omitempty"`
+		Content   string         `json:"content,omitempty"`
+		IsError   bool           `json:"is_error,omitempty"`
+	}
+	var decoded anthropicContentPartJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	p.Type = decoded.Type
+	p.Text = decoded.Text
+	p.ID = decoded.ID
+	p.Name = decoded.Name
+	p.Input = decoded.Input
+	p.ToolUseID = decoded.ToolUseID
+	p.Content = decoded.Content
+	p.IsError = decoded.IsError
+	return nil
+}
+
 type anthropicMessagesResponse struct {
 	ID         string                 `json:"id"`
 	Type       string                 `json:"type"`
