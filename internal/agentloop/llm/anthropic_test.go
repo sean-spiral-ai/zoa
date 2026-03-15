@@ -42,6 +42,63 @@ func TestToAnthropicMessagesToolUseIncludesEmptyInputObject(t *testing.T) {
 	}
 }
 
+func TestBuildAnthropicMessagesRequestMarshalsEmptyToolInputObject(t *testing.T) {
+	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
+		Model: "claude-opus-4-6",
+		Messages: []Message{
+			{
+				Role: RoleAssistant,
+				Parts: []AssistantPart{
+					{
+						ToolCall: &ToolCall{
+							ID:   "call-1",
+							Name: "demo_tool",
+							Args: nil,
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	messages, ok := decoded["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message in JSON, got %#v", decoded["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first message object, got %#v", messages[0])
+	}
+	content, ok := message["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one content part in JSON, got %#v", message["content"])
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected content object, got %#v", content[0])
+	}
+	input, ok := part["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tool_use input object in JSON, got %#v", part["input"])
+	}
+	if len(input) != 0 {
+		t.Fatalf("expected empty tool_use input object, got %#v", input)
+	}
+}
+
 func TestBuildAnthropicMessagesRequestIncludesEphemeralCacheControl(t *testing.T) {
 	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
 		Model:    "claude-opus-4-6",
