@@ -73,10 +73,38 @@ type anthropicContentPart struct {
 	Text      string         `json:"text,omitempty"`
 	ID        string         `json:"id,omitempty"`
 	Name      string         `json:"name,omitempty"`
-	Input     map[string]any `json:"input"`
+	Input     map[string]any `json:"-"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   string         `json:"content,omitempty"`
 	IsError   bool           `json:"is_error,omitempty"`
+}
+
+func (p anthropicContentPart) MarshalJSON() ([]byte, error) {
+	out := map[string]any{
+		"type": p.Type,
+	}
+	if p.Text != "" {
+		out["text"] = p.Text
+	}
+	if p.ID != "" {
+		out["id"] = p.ID
+	}
+	if p.Name != "" {
+		out["name"] = p.Name
+	}
+	if p.Type == "tool_use" {
+		out["input"] = normalizeToolCallArgs(p.Input)
+	}
+	if p.ToolUseID != "" {
+		out["tool_use_id"] = p.ToolUseID
+	}
+	if p.Content != "" {
+		out["content"] = p.Content
+	}
+	if p.IsError {
+		out["is_error"] = p.IsError
+	}
+	return json.Marshal(out)
 }
 
 type anthropicMessagesResponse struct {

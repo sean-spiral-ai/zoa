@@ -99,6 +99,46 @@ func TestBuildAnthropicMessagesRequestMarshalsEmptyToolInputObject(t *testing.T)
 	}
 }
 
+func TestBuildAnthropicMessagesRequestOmitsInputForTextContent(t *testing.T) {
+	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
+		Model:    "claude-opus-4-6",
+		Messages: []Message{{Role: RoleUser, Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	messages, ok := decoded["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message in JSON, got %#v", decoded["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first message object, got %#v", messages[0])
+	}
+	content, ok := message["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one content part in JSON, got %#v", message["content"])
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected content object, got %#v", content[0])
+	}
+	if _, exists := part["input"]; exists {
+		t.Fatalf("did not expect input field on text content, got %#v", part["input"])
+	}
+}
+
 func TestBuildAnthropicMessagesRequestIncludesEphemeralCacheControl(t *testing.T) {
 	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
 		Model:    "claude-opus-4-6",
