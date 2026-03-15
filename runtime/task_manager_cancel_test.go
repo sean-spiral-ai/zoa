@@ -2,10 +2,16 @@ package runtime
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func slogDiscardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestTaskManagerCancelDoneTaskReturnsFalse(t *testing.T) {
 	registry := NewRegistry()
@@ -233,5 +239,39 @@ func TestTaskManagerCancelCascadesToChildTasks(t *testing.T) {
 	}
 	if childSnap.Status != TaskStatusCanceled {
 		t.Fatalf("expected child canceled status, got %s (%s)", childSnap.Status, childSnap.Error)
+	}
+}
+
+func TestTaskManagerCloseDoesNotBlockForeverOnStuckPump(t *testing.T) {
+	canceled := make(chan struct{}, 1)
+	manager := &TaskManager{
+		logger: slogDiscardLogger(),
+		pumpShutdownTimeout: 20 * time.Millisecond,
+		pumps: map[string]*pumpRunner{
+			"stuck": {
+				id: "stuck",
+				cancel: func() {
+					select {
+					case canceled <- struct{}{}:
+					default:
+					}
+				},
+				done: make(chan struct{}),
+			},
+		},
+	}
+
+	start := time.Now()
+	if err := manager.Close(); err != nil {
+		t.Fatalf("close manager: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("close took too long: %s", elapsed)
+	}
+
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("expected pump cancel to be called")
 	}
 }

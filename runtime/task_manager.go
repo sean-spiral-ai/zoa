@@ -61,6 +61,10 @@ type TaskManagerOptions struct {
 
 	// Logger is an optional structured logger. Defaults to slog.Default().
 	Logger *slog.Logger
+
+	// PumpShutdownTimeout bounds how long Close waits for a canceled pump runner.
+	// Zero uses the default.
+	PumpShutdownTimeout time.Duration
 }
 
 type SpawnOptions struct {
@@ -111,6 +115,7 @@ type TaskManager struct {
 
 	pumpCtx    context.Context
 	pumpCancel context.CancelFunc
+	pumpShutdownTimeout time.Duration
 	pumpMu     sync.Mutex
 	pumps      map[string]*pumpRunner
 	closed     bool
@@ -132,6 +137,13 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 		logger = slog.Default()
 	}
 	logger = logger.With("component", "task_manager")
+	pumpShutdownTimeout := opts.PumpShutdownTimeout
+	if pumpShutdownTimeout == 0 {
+		pumpShutdownTimeout = time.Second
+	}
+	if pumpShutdownTimeout < 0 {
+		return nil, fmt.Errorf("pump shutdown timeout must be >= 0")
+	}
 
 	manager := &TaskManager{
 		registry: registry,
@@ -140,7 +152,9 @@ func NewTaskManagerWithContext(ctx context.Context, registry *Registry, opts Tas
 		logger:   logger,
 		tasks:    map[string]*taskRecord{},
 		pumps:    map[string]*pumpRunner{},
+		pumpShutdownTimeout: 5 * time.Second,
 	}
+	manager.pumpShutdownTimeout = pumpShutdownTimeout
 	manager.pumpCtx, manager.pumpCancel = context.WithCancel(ctx)
 	db, resolvedPath, err := openSQLite(opts.SQLitePath)
 	if err != nil {
@@ -651,7 +665,11 @@ func (m *TaskManager) stopAllPumps() {
 		runner.cancel()
 	}
 	for _, runner := range pumps {
-		<-runner.done
+		select {
+		case <-runner.done:
+		case <-time.After(m.pumpShutdownTimeout):
+			m.logger.Warn("timed out waiting for pump shutdown", "pump_id", runner.id, "timeout", m.pumpShutdownTimeout)
+		}
 	}
 }
 
