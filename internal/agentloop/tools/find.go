@@ -24,7 +24,7 @@ func NewFindTool(paths *PathResolver) *FindTool {
 func (t *FindTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "find",
-		Description: "Find files by glob pattern using fd (fallback: find). Supports **. Ignores .git and node_modules.",
+		Description: "Find files or directories by glob pattern using fd (fallback: find). Supports **. Ignores .git and node_modules.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -180,7 +180,6 @@ func buildFindCommand(opts findRunOptions) (backend string, args []string, cmdDi
 func buildFDArgs(pattern, searchRoot string) []string {
 	return []string{
 		"--glob",
-		"--type", "f",
 		"--color", "never",
 		"--hidden",
 		"--no-ignore",
@@ -199,7 +198,7 @@ func buildFindArgs(pattern, searchRoot string) []string {
 	args := []string{
 		searchRoot,
 		"-type", "d", "(", "-name", ".git", "-o", "-name", "node_modules", ")", "-prune",
-		"-o", "-type", "f",
+		"-o",
 	}
 	args = append(args, pred...)
 	args = append(args, "-print")
