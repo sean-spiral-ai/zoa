@@ -241,10 +241,10 @@ func requireLiveModel(t *testing.T) string {
 	if token := strings.TrimSpace(keys.ResolveWithNearestDotEnv("", model.GeminiAPIKeyEnvVar)); token != "" {
 		return model.ModelGemini3FlashPreview
 	}
-	if token := strings.TrimSpace(keys.ResolveWithNearestDotEnv("", model.AnthropicOAuthTokenEnvVar)); token != "" {
+	if token := strings.TrimSpace(keys.ResolveWithNearestDotEnv("", model.AnthropicAPIKeyEnvVar)); token != "" {
 		return model.ModelClaudeSonnet46
 	}
-	t.Skip("no live model credential found; set GEMINI_API_KEY or ANTHROPIC_OAUTH_TOKEN")
+	t.Skip("no live model credential found; set GEMINI_API_KEY or ANTHROPIC_API_KEY")
 	return ""
 }
 

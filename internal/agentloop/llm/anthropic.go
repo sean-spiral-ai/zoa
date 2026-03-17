@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"zoa/internal/semtrace"
@@ -15,18 +16,19 @@ import (
 
 const anthropicMessagesURL = "https://api.anthropic.com/v1/messages"
 const anthropicVersionHeader = "2023-06-01"
-const anthropicOAuthBetaHeader = "oauth-2025-04-20"
 const defaultAnthropicMaxTokens = 64000
+const anthropicSetupTokenPrefix = "sk-ant-oat"
+const anthropicClaudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
 
 type AnthropicClient struct {
-	oauthToken string
+	apiKey     string
 	httpClient *http.Client
 	url        string
 }
 
-func NewAnthropicClientWithOAuthToken(token string) *AnthropicClient {
+func NewAnthropicClient(apiKey string) *AnthropicClient {
 	return &AnthropicClient{
-		oauthToken: strings.TrimSpace(token),
+		apiKey:     strings.TrimSpace(apiKey),
 		httpClient: &http.Client{},
 		url:        anthropicMessagesURL,
 	}
@@ -35,12 +37,17 @@ func NewAnthropicClientWithOAuthToken(token string) *AnthropicClient {
 type anthropicMessagesRequest struct {
 	Model        string                 `json:"model"`
 	MaxTokens    int                    `json:"max_tokens"`
-	System       string                 `json:"system,omitempty"`
+	System       []anthropicSystemPart  `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicToolSpec    `json:"tools,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 	Temperature  *float64               `json:"temperature,omitempty"`
+}
+
+type anthropicSystemPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type anthropicCacheControl struct {
@@ -180,8 +187,8 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 		"max_output_tokens": req.MaxOutputTokens,
 	})
 
-	if strings.TrimSpace(c.oauthToken) == "" {
-		return CompletionResponse{}, errors.New("oauth token is required")
+	if strings.TrimSpace(c.apiKey) == "" {
+		return CompletionResponse{}, errors.New("api key is required")
 	}
 	if len(req.Messages) == 0 {
 		return CompletionResponse{}, errors.New("at least one message is required")
@@ -191,7 +198,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 		return CompletionResponse{}, errors.New("model is required")
 	}
 
-	payload, err := buildAnthropicMessagesRequest(req)
+	payload, err := buildAnthropicMessagesRequest(req, isAnthropicSetupToken(c.apiKey))
 	if err != nil {
 		return CompletionResponse{}, err
 	}
@@ -207,8 +214,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", anthropicVersionHeader)
-	httpReq.Header.Set("anthropic-beta", anthropicOAuthBetaHeader)
-	httpReq.Header.Set("Authorization", "Bearer "+c.oauthToken)
+	httpReq.Header.Set("x-api-key", c.apiKey)
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -226,16 +232,30 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 	}
 
 	if httpResp.StatusCode >= 300 {
+		bodySummary := summarizeHTTPErrorBody(respBody)
 		var apiErr anthropicErrorEnvelope
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error != nil {
-			return CompletionResponse{}, fmt.Errorf("anthropic error (%s): %s", apiErr.Error.Type, apiErr.Error.Message)
+			semtrace.LogAttrs(ctx, "llm.error", "anthropic non-2xx", map[string]any{
+				"provider":     "anthropic",
+				"model":        model,
+				"status":       httpResp.StatusCode,
+				"body_excerpt": bodySummary,
+			})
+			return CompletionResponse{}, fmt.Errorf(
+				"anthropic HTTP %d error (%s): %s [body=%s]",
+				httpResp.StatusCode,
+				apiErr.Error.Type,
+				apiErr.Error.Message,
+				bodySummary,
+			)
 		}
 		semtrace.LogAttrs(ctx, "llm.error", "anthropic non-2xx", map[string]any{
-			"provider": "anthropic",
-			"model":    model,
-			"status":   httpResp.StatusCode,
+			"provider":     "anthropic",
+			"model":        model,
+			"status":       httpResp.StatusCode,
+			"body_excerpt": bodySummary,
 		})
-		return CompletionResponse{}, fmt.Errorf("anthropic HTTP %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
+		return CompletionResponse{}, fmt.Errorf("anthropic HTTP %d: %s", httpResp.StatusCode, bodySummary)
 	}
 
 	var parsed anthropicMessagesResponse
@@ -302,8 +322,8 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompletionRequest) (
 	return resp, nil
 }
 
-func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequest, error) {
-	system, messages := toAnthropicMessages(req.Messages)
+func buildAnthropicMessagesRequest(req CompletionRequest, setupToken bool) (anthropicMessagesRequest, error) {
+	systemText, messages := toAnthropicMessages(req.Messages)
 	if len(messages) == 0 {
 		return anthropicMessagesRequest{}, errors.New("no user/assistant/tool messages to send")
 	}
@@ -315,7 +335,7 @@ func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequ
 	payload := anthropicMessagesRequest{
 		Model:        strings.TrimSpace(req.Model),
 		MaxTokens:    maxTokens,
-		System:       system,
+		System:       buildAnthropicSystemParts(systemText, setupToken),
 		Messages:     messages,
 		CacheControl: &anthropicCacheControl{Type: "ephemeral", TTL: "1h"},
 	}
@@ -346,6 +366,28 @@ func buildAnthropicMessagesRequest(req CompletionRequest) (anthropicMessagesRequ
 	}
 
 	return payload, nil
+}
+
+func buildAnthropicSystemParts(systemText string, setupToken bool) []anthropicSystemPart {
+	parts := make([]anthropicSystemPart, 0, 2)
+	if setupToken {
+		// Anthropic setup-tokens can reject Opus requests unless the payload carries
+		// the Claude Code identity block that OpenClaw and Claude Code include.
+		parts = append(parts, anthropicSystemPart{
+			Type: "text",
+			Text: anthropicClaudeCodeSystemPrompt,
+		})
+	}
+	if strings.TrimSpace(systemText) != "" {
+		parts = append(parts, anthropicSystemPart{
+			Type: "text",
+			Text: systemText,
+		})
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return parts
 }
 
 func toAnthropicMessages(messages []Message) (string, []anthropicMessage) {
@@ -461,4 +503,21 @@ func normalizeToolCallArgs(args map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return args
+}
+
+func summarizeHTTPErrorBody(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return `""`
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	const maxLen = 400
+	if len(text) > maxLen {
+		text = text[:maxLen] + "..."
+	}
+	return strconv.Quote(text)
+}
+
+func isAnthropicSetupToken(token string) bool {
+	return strings.HasPrefix(strings.TrimSpace(token), anthropicSetupTokenPrefix)
 }

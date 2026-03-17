@@ -641,10 +641,9 @@ func (t *TaskContext) ensureMainConversation() error {
 func (t *TaskContext) resolveAPIKey() (string, error) {
 	key, ok := modelpkg.ResolveCredential(t.apiKey, t.baseConfig.Model)
 	if !ok {
-		envVar := modelpkg.RequiredCredentialEnvVarForModel(t.baseConfig.Model)
 		return "", fmt.Errorf(
-			"%s is required for conversation-backed operations",
-			envVar,
+			"%s for conversation-backed operations",
+			modelpkg.MissingCredentialMessageForModel(t.baseConfig.Model),
 		)
 	}
 	t.apiKey = key
@@ -785,7 +784,7 @@ func (t *TaskContext) newLLMClient(credential string) (llm.Client, error) {
 	case modelpkg.ProviderGemini:
 		return llm.NewGeminiClient(credential), nil
 	case modelpkg.ProviderAnthropic:
-		return llm.NewAnthropicClientWithOAuthToken(credential), nil
+		return llm.NewAnthropicClient(credential), nil
 	default:
 		return nil, fmt.Errorf("unsupported model %q", t.baseConfig.Model)
 	}

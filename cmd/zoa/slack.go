@@ -14,10 +14,10 @@ import (
 
 	"zoa/conversation"
 	convdb "zoa/conversation/db"
+	modelpkg "zoa/internal/agentloop/model"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
 	slackbridge "zoa/internal/slack"
-	modelpkg "zoa/internal/agentloop/model"
 )
 
 func runSlack(args []string) int {
@@ -115,11 +115,10 @@ func runSlack(args []string) int {
 	}
 	_, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		envVar := modelpkg.RequiredCredentialEnvVarForModel(model)
 		fmt.Fprintf(
 			os.Stderr,
-			"warning: %s is not set; non-slash chat messages will fail until configured\n",
-			envVar,
+			"warning: %s; non-slash chat messages will fail until configured\n",
+			modelpkg.MissingCredentialMessageForModel(model),
 		)
 	}
 

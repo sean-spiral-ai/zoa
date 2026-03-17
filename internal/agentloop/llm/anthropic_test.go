@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +61,7 @@ func TestBuildAnthropicMessagesRequestMarshalsEmptyToolInputObject(t *testing.T)
 				},
 			},
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
 	}
@@ -103,7 +105,7 @@ func TestBuildAnthropicMessagesRequestOmitsInputForTextContent(t *testing.T) {
 	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
 		Model:    "claude-opus-4-6",
 		Messages: []Message{{Role: RoleUser, Text: "hello"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
 	}
@@ -143,7 +145,7 @@ func TestBuildAnthropicMessagesRequestIncludesEphemeralCacheControl(t *testing.T
 	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
 		Model:    "claude-opus-4-6",
 		Messages: []Message{{Role: RoleUser, Text: "hello"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
 	}
@@ -173,9 +175,9 @@ func TestBuildAnthropicMessagesRequestIncludesEphemeralCacheControl(t *testing.T
 }
 
 func TestLiveSmokeAnthropic(t *testing.T) {
-	token := requireLiveProviderToken(t, "ANTHROPIC_OAUTH_TOKEN")
+	token := requireLiveProviderToken(t, "ANTHROPIC_API_KEY")
 
-	client := NewAnthropicClientWithOAuthToken(token)
+	client := NewAnthropicClient(token)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -192,9 +194,9 @@ func TestLiveSmokeAnthropic(t *testing.T) {
 }
 
 func TestLiveAnthropicToolCallRoundTripPreservesInput(t *testing.T) {
-	token := requireLiveProviderToken(t, "ANTHROPIC_OAUTH_TOKEN")
+	token := requireLiveProviderToken(t, "ANTHROPIC_API_KEY")
 
-	client := NewAnthropicClientWithOAuthToken(token)
+	client := NewAnthropicClient(token)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -274,7 +276,7 @@ func TestLiveAnthropicToolCallRoundTripPreservesInput(t *testing.T) {
 		}},
 	}
 
-	payload, err := buildAnthropicMessagesRequest(followupReq)
+	payload, err := buildAnthropicMessagesRequest(followupReq, false)
 	if err != nil {
 		t.Fatalf("buildAnthropicMessagesRequest follow-up returned error: %v", err)
 	}
@@ -308,5 +310,84 @@ func TestLiveAnthropicToolCallRoundTripPreservesInput(t *testing.T) {
 	}
 	if got, ok := input["value"].(string); !ok || got != "hello" {
 		t.Fatalf("expected follow-up tool_use input value %q, got %#v", "hello", input["value"])
+	}
+}
+
+func TestAnthropicCompleteIncludesStatusAndBodyForNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"type":"error",
+			"error":{
+				"type":"invalid_request_error",
+				"message":"Error"
+			},
+			"debug":"tools.0.input_schema.properties.path.type must be specified"
+		}`))
+	}))
+	defer srv.Close()
+
+	client := NewAnthropicClient("test-token")
+	client.url = srv.URL
+
+	_, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "claude-opus-4-6",
+		Messages: []Message{{Role: RoleUser, Text: "What is in the SwimLife directory?"}},
+	})
+	if err == nil {
+		t.Fatal("expected non-2xx error")
+	}
+
+	errText := err.Error()
+	if !strings.Contains(errText, "anthropic HTTP 400 error (invalid_request_error): Error") {
+		t.Fatalf("expected HTTP status in error, got %q", errText)
+	}
+	if !strings.Contains(errText, `[body="{`) {
+		t.Fatalf("expected body excerpt in error, got %q", errText)
+	}
+	if !strings.Contains(errText, `tools.0.input_schema.properties.path.type must be specified`) {
+		t.Fatalf("expected sanitized body excerpt in error, got %q", errText)
+	}
+}
+
+func TestBuildAnthropicMessagesRequestPrependsClaudeCodeSystemForSetupTokens(t *testing.T) {
+	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
+		Model: "claude-opus-4-6",
+		Messages: []Message{
+			{Role: RoleSystem, Text: "Keep responses short."},
+			{Role: RoleUser, Text: "hello"},
+		},
+	}, true)
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
+	}
+	if len(payload.System) != 2 {
+		t.Fatalf("expected 2 system parts, got %#v", payload.System)
+	}
+	if payload.System[0].Text != anthropicClaudeCodeSystemPrompt {
+		t.Fatalf("expected Claude Code system prompt first, got %#v", payload.System[0])
+	}
+	if payload.System[1].Text != "Keep responses short." {
+		t.Fatalf("expected caller system prompt second, got %#v", payload.System[1])
+	}
+}
+
+func TestBuildAnthropicMessagesRequestOmitsClaudeCodeSystemForAPIKeys(t *testing.T) {
+	payload, err := buildAnthropicMessagesRequest(CompletionRequest{
+		Model: "claude-opus-4-6",
+		Messages: []Message{
+			{Role: RoleSystem, Text: "Keep responses short."},
+			{Role: RoleUser, Text: "hello"},
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("buildAnthropicMessagesRequest returned error: %v", err)
+	}
+	if len(payload.System) != 1 {
+		t.Fatalf("expected 1 system part, got %#v", payload.System)
+	}
+	if payload.System[0].Text != "Keep responses short." {
+		t.Fatalf("expected caller system prompt only, got %#v", payload.System[0])
 	}
 }

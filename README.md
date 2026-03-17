@@ -45,5 +45,5 @@ go run ./cmd/zoa -- inspect --session-dir .gateway/sessions/default conversation
 ## Notes
 
 - Set `GEMINI_API_KEY` for Gemini models.
-- Set `ANTHROPIC_OAUTH_TOKEN` for Anthropic models.
+- Set `ANTHROPIC_API_KEY` or `ANTHROPIC_SETUP_TOKEN` for Anthropic models.
 - `call_zoafunction` is asynchronous by design. If the model needs the result, it must call `wait_zoafunction`.

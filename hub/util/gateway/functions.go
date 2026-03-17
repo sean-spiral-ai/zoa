@@ -502,7 +502,7 @@ func processChatMessage(state *state, tc *runtime.TaskContext, input map[string]
 
 	apiKey, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		return "", fmt.Errorf("%s is required", modelpkg.RequiredCredentialEnvVarForModel(model))
+		return "", fmt.Errorf("%s", modelpkg.MissingCredentialMessageForModel(model))
 	}
 
 	cwd, err := hub.StringInput(input, "cwd", false)
@@ -618,7 +618,7 @@ func gatewayLLMClient(model string, credential string) (llm.Client, error) {
 	case modelpkg.ProviderGemini:
 		return llm.NewGeminiClient(credential), nil
 	case modelpkg.ProviderAnthropic:
-		return llm.NewAnthropicClientWithOAuthToken(credential), nil
+		return llm.NewAnthropicClient(credential), nil
 	default:
 		return nil, fmt.Errorf("unsupported model %q", model)
 	}

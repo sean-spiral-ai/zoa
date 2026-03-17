@@ -12,10 +12,10 @@ import (
 
 	"zoa/conversation"
 	convdb "zoa/conversation/db"
+	modelpkg "zoa/internal/agentloop/model"
 	"zoa/internal/gatewaychannel"
 	"zoa/internal/gatewayclient"
 	"zoa/internal/keys"
-	modelpkg "zoa/internal/agentloop/model"
 )
 
 func runTUI(args []string) int {
@@ -71,11 +71,10 @@ func runTUI(args []string) int {
 
 	_, ok := modelpkg.ResolveCredential("", model)
 	if !ok {
-		envVar := modelpkg.RequiredCredentialEnvVarForModel(model)
 		fmt.Fprintf(
 			os.Stderr,
-			"warning: %s is not set; non-slash chat messages will fail until configured\n",
-			envVar,
+			"warning: %s; non-slash chat messages will fail until configured\n",
+			modelpkg.MissingCredentialMessageForModel(model),
 		)
 	}
 

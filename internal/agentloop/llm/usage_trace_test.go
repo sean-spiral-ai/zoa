@@ -75,7 +75,7 @@ func TestAnthropicComplete_EmitsUsageAttrsOnRegionEnd(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithOAuthToken("test-token")
+	client := NewAnthropicClient("test-token")
 	client.url = server.URL
 	client.httpClient = server.Client()
 

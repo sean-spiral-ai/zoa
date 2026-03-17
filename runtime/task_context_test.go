@@ -188,7 +188,7 @@ func requireModel(t *testing.T) string {
 	t.Fatalf(
 		"%s or %s is required to run LLM-backed tests",
 		modelpkg.GeminiAPIKeyEnvVar,
-		modelpkg.AnthropicOAuthTokenEnvVar,
+		modelpkg.AnthropicAPIKeyEnvVar,
 	)
 	return ""
 }
